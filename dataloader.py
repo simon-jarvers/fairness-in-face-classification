@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 
 
 class FaceDataset(Dataset):
-    def __init__(self, annotations_file, img_dir, device, transform=None, target_transform=None):
+    def __init__(self, annotations_file, img_dir, device=None, transform=None, target_transform=None):
         self.img_labels = pd.read_csv(annotations_file)
         self.img_dir = img_dir
         self.device = device

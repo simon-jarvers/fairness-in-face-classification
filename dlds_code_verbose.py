@@ -144,10 +144,10 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
     plt.savefig('train_val_graph.png')
 
 data_path='DD2424'
-training_data = FaceDataset(data_path+'/fairface_label_train.csv', data_path)
+training_data = FaceDataset(data_path+'/fairface_label_train.csv', data_path, device=device)
 train_dataloader = DataLoader(training_data, batch_size=64, shuffle=False)
 
-val_data = FaceDataset(data_path+'/fairface_label_val.csv', data_path)
+val_data = FaceDataset(data_path+'/fairface_label_val.csv', data_path, device=device)
 val_dataloader = DataLoader(val_data, batch_size=64, shuffle=False)
 
 # Display image and label.
