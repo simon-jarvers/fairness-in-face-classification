@@ -1,0 +1,11 @@
+#INITIAL SETTINGS
+layers_to_train: ["layer4", "fc"]
+output_category: "gender" #gender or race
+use_data_augmentation: True
+batch_size: 64
+start_learningrate: 0.001
+n_epochs: 2
+data_path: "DD2424_data"
+use_short_data_version: True
+train_bn_params: False
+update_bn_estimate: False
