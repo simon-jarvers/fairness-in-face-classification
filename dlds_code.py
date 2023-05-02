@@ -21,23 +21,17 @@ from torch import nn
 from torch.utils.tensorboard import SummaryWriter
 from tqdm.notebook import tqdm
 import torchvision
+import torchvision.transforms as transforms
+import datetime
+import sys
+import yaml
 #import torchvision.transforms.v2 as transforms
-
-from dataloader import FaceDataset
 
 
 # from google.colab import drive
 # #drive.mount('/content/drive')
 # drive.mount('/content/drive', force_remount=True)
 
-device = (
-    "cuda"
-    if torch.cuda.is_available()
-    else "mps"
-    if torch.backends.mps.is_available()
-    else "cpu"
-)
-print(device)
 
 def np_to_tensor(x, device):
     # allocates tensors from np.arrays
@@ -46,30 +40,93 @@ def np_to_tensor(x, device):
     else:
         return torch.from_numpy(x).contiguous().pin_memory().to(device=device, non_blocking=True)
 
+class FaceDataset(Dataset):
+    def __init__(self, annotations_file, img_dir, transform=None, target_transform=None, output_category="gender"):
+        self.img_labels = pd.read_csv(annotations_file)
+        self.img_dir = img_dir
+        self.transform = transform
+        self.target_transform = target_transform
+        self.output_category = output_category
 
-def load_model(num_classes):
-  #load resnet. depth 18, 34, 50, 101, 152
-  model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
-  #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
-  #adapt the last layer to number of classes
-  model.fc = torch.nn.Sequential(torch.nn.Linear(in_features=512, out_features=num_classes, bias=True), torch.nn.Softmax(dim=1))
-  #print(model)
-  for param in model.parameters():
-    param.requires_grad = False
-  #for param in model.layer2.parameters():
-  #  param.requires_grad = True
-  #for param in model.layer3.parameters():
-  #  param.requires_grad = True
-  #for param in model.layer4.parameters():
-  #  param.requires_grad = True
-  for param in model.fc.parameters():
-      param.requires_grad = True
+    def __len__(self):
+        return len(self.img_labels)
 
-  return model.to(device)
-  #model.fc=torch.nn.Linear(in_features=512, out_features=num_classes, bias=True)
-  #model_final=torch.nn.Sequential(model, torch.nn.Softmax(dim=0))
-  #print(model_final)
-  #return model_final
+    def __getitem__(self, idx):
+        #print(idx)
+        img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
+        image = (read_image(img_path)/255).to(device=device, non_blocking=True)
+        #one-hot-encoding
+        #label=torch.tensor(int(self.img_labels.iloc[idx, 2]=='Female'))
+        #label=torch.nn.functional.one_hot(label,num_classes=2)
+        if self.output_category == "gender":
+            label = torch.tensor(int(self.img_labels.iloc[idx, 2] == 'Female'))
+            label = torch.nn.functional.one_hot(label, num_classes=2)
+        elif self.output_category == "race":
+            ethnicity = self.img_labels.iloc[idx, 3]
+            label = 0
+            if ethnicity == 'Black':
+                label = 0
+            elif ethnicity == "East Asian":
+                label = 1
+            elif ethnicity == "Indian":
+                label = 2
+            elif ethnicity == "Latino_Hispanic":
+                label = 3
+            elif ethnicity == "Middle Eastern":
+                label = 4
+            elif ethnicity == "Southeast Asian":
+                label = 5
+            elif ethnicity == "White":
+                label = 6
+            else:
+                print("Problem: ethnicity label not known for index " + str(idx))
+            label = torch.tensor(label)
+            label = torch.nn.functional.one_hot(label, num_classes=7)
+        else:
+            print("no valid output_category")
+        label=label.float().to(device=device, non_blocking=True)
+        if self.transform:
+            image = self.transform(image)
+        if self.target_transform:
+            label = self.target_transform(label)
+        return image, label
+
+def freeze_bn_module_params(module):
+    if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+        #print("freeze_bn_params")
+        #print(module)
+        for param in module.parameters():
+            #print(param.requires_grad)
+            param.requires_grad = False
+            #print(param.requires_grad)
+
+def set_bn_estimate_to_eval(module):
+    if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
+        #print("bn_eval")
+        #print(module.training)
+        module.eval()
+        #print(module.training)
+
+def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_estimate=True):
+    #load resnet. depth 18, 34, 50, 101, 152
+    model = torchvision.models.resnet18(pretrained=True)
+    #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
+    #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
+    #adapt the last layer to number of classes
+    model.fc = torch.nn.Sequential(torch.nn.Linear(in_features=512, out_features=num_classes, bias=True), torch.nn.Softmax(dim=1))
+    #specify which layers to train
+    if layers_to_train!=[]:
+        for param in model.parameters():
+            param.requires_grad = False
+        for l in layers_to_train:
+            #print(getattr(model, l))
+            for param in getattr(model, l).parameters():
+                param.requires_grad = True
+    if not train_bn_params:
+        model.apply(freeze_bn_module_params)
+    if not update_bn_estimate:
+        model.apply(set_bn_estimate_to_eval)
+    return model.to(device)
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs):
     # training loop
@@ -79,6 +136,7 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
     history = {}  # collects metrics at the end of each epoch
 
     for epoch in range(n_epochs):  # loop over the dataset multiple times
+        print('Starting epoch ' + str(epoch))
 
         # initialize metric list
         metrics = {'loss': [], 'val_loss': []}
@@ -91,8 +149,10 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         model.train()
         for (x, y) in train_dataloader:#was pbar
             optimizer.zero_grad()  # zero out gradients
-            #Frawa: changed for FCN_ResNet
+            if(use_data_augmentation):
+                x=data_augmentation(x,0.5)
             y_hat = model(x)  # forward pass
+            #Frawa: changed for FCN_ResNet
             #output = model(x)  # forward pass
             #y_hat = output['out'][:,:1,:,:]
             #print("prediction vs actual during train")
@@ -101,6 +161,7 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             loss = loss_fn(y_hat, y)
             loss.backward()  # backward pass
             optimizer.step()  # optimize weights
+            #print("step")
             # log partial metrics
             metrics['loss'].append(loss.item())
             for k, fn in metric_fns.items():
@@ -133,68 +194,139 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         #show_val_samples(x.detach().cpu().numpy(), y.detach().cpu().numpy(), y_hat.detach().cpu().numpy())
 
     print('Finished Training')
+    ct = str(datetime.datetime.now())
+    ct = ct.replace(" ", "_")
+    ct = ct.replace(".", "_")
+    ct = ct.replace(":", "-")
+
     # plot loss curves
-    plt.plot([v['loss'] for k, v in history.items()], label='Training Loss')
-    plt.plot([v['val_loss'] for k, v in history.items()], label='Validation Loss')
-    plt.ylabel('Loss')
-    plt.xlabel('Epochs')
-    plt.legend()
-    #plt.show()
-    plt.savefig('train_val_graph.png')
-
-data_path='DD2424'
-training_data = FaceDataset(data_path+'/fairface_label_train.csv', data_path, device=device)
-train_dataloader = DataLoader(training_data, batch_size=64, shuffle=False)
-
-val_data = FaceDataset(data_path+'/fairface_label_val.csv', data_path, device=device)
-val_dataloader = DataLoader(val_data, batch_size=64, shuffle=False)
-
-# Display image and label.
-train_features, train_labels = next(iter(train_dataloader))
-print(train_features)
-print(train_labels)
-#print(f"Feature batch shape: {train_features.size()}")
-#for i in range(3):
-#    img = train_features[i].permute(1, 2, 0)
-#    label = train_labels[i]
-#    plt.imshow(img)
-#    plt.title(label)
-#    plt.show()
-#    print(f"Label: {label}")
-
-# more data augmentation options at https://pytorch.org/vision/stable/transforms.html
-# def data_augmentation(image):
-#   translayers = torch.nn.Sequential(
-#     torchvision.transforms.RandomHorizontalFlip(0.5),
-#     torchvision.transforms.ColorJitter(0.1, 0.15, 0.1, 0.05),
-#     torchvision.transforms.RandomRotation(10)
-#   )
-#
-#   return translayers(image)
-
-#augmented=data_augmentation(train_features[0])
-#img = train_features[0].permute(1, 2, 0)
-#plt.imshow(img)
-#plt.title("original")
-#plt.show()
-#plt.savefig('original_image.png')
-#plt.imshow(augmented.permute(1, 2, 0))
-#plt.title("augmented")
-#plt.show()
-#plt.savefig('augmented_image.png')
+    fig, ax = plt.subplots(1)
+    ax.plot([v['loss'] for k, v in history.items()], label='Training Loss')
+    ax.plot([v['val_loss'] for k, v in history.items()], label='Validation Loss')
+    ax.set_ylabel('Loss')
+    ax.set_xlabel('Epochs')
+    ax.set_title("Loss for config file= " + str(configfilename))
+    ax.legend()
+    #fig.show()
+    #fig.savefig('train_val_graph_inclfc_test.png')
+    graphname = "Loss_graph_" + str(configfilename) + "_" + ct + ".png"
+    print("Saved loss graph with filename: " + graphname)
+    fig.savefig(graphname)
+    for metricname, _ in metric_fns.items():
+        fig2, ax2 = plt.subplots(1)
+        ax2.plot([v[metricname] for k, v in history.items()], label=('Training '+ metricname))
+        ax2.plot([v['val_'+ metricname] for k, v in history.items()], label=('Validation '+ metricname))
+        ax2.set_ylabel(metricname)
+        ax2.set_xlabel('Epochs')
+        ax2.set_title(str(metricname+" for config file= "+str(configfilename)))
+        ax2.legend()
+        #fig2.show()
+        graphname = metricname+"_graph_"+str(configfilename) + "_"+ct+".png"
+        print("Saved "+ metricname+" graph with filename: " + graphname)
+        fig2.savefig(graphname)
 
 def accuracy_fn(y_hat, y):
     # computes classification accuracy
     return (y_hat.round() == y.round()).float().mean()
 
-model=load_model(2)
-loss_fn = nn.BCELoss()
-metric_fns = {'acc': accuracy_fn}
-optimizer = torch.optim.Adam(model.parameters())
-n_epochs = 15
+# more data augmentation options at https://pytorch.org/vision/stable/transforms.html
+def data_augmentation(image, prob):
+  translayers = transforms.RandomApply(
+      torch.nn.Sequential(
+        torchvision.transforms.RandomHorizontalFlip(0.5),
+        torchvision.transforms.ColorJitter(0.1, 0.12, 0.1, 0.05),
+        torchvision.transforms.RandomRotation(8)
+        ), p=prob
+  )
+  return translayers(image)
 
-start = time.time()
-train(train_dataloader, val_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs)
-end = time.time()
-print("Time for training "+str(n_epochs)+" epochs:")
-print((end - start)/60)
+if __name__ == "__main__":
+    print(torchvision.__version__)
+    if len(sys.argv)>1:
+        configfilename = sys.argv[1]
+        file = open("configs/"+configfilename + ".yaml", 'r')
+        config_dict = yaml.safe_load(file)
+        print("Using config file named " + configfilename + " with configurations: ")
+        print(config_dict)
+    else:
+        configfilename = "config_default"
+        config_dict = {}
+        print("No config file provided, using default")
+
+    layers_to_train = config_dict.get("layers_to_train", [])
+    output_category = config_dict.get("output_category", "gender")
+    use_data_augmentation=config_dict.get("use_data_augmentation", False)
+    batch_size=config_dict.get("batch_size", 64)
+    start_learningrate = config_dict.get("start_learningrate", 0.001)
+    n_epochs = config_dict.get("n_epochs", 15)
+    data_path=config_dict.get("data_path", 'DD2424_data')
+    use_short_data_version = config_dict.get("use_short_data_version", False)
+    train_bn_params = config_dict.get("train_bn_params", True)
+    update_bn_estimate = config_dict.get("update_bn_estimate", True)
+
+    if output_category == 'gender':
+        num_classes = 2
+    elif output_category == "race":
+        num_classes=7
+    else:
+        print("Invalid output_category")
+
+    if use_short_data_version:
+        labelfileprev = "short_version_"
+    else:
+        labelfileprev = ""
+
+    device = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
+    print("Running on " + device)
+
+    training_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_train.csv", data_path, output_category=output_category)
+    train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=False)
+
+    val_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_val.csv", data_path, output_category=output_category)
+    val_dataloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
+    print("Datasets loaded")
+
+    # Display image and label.
+    #train_features, train_labels = next(iter(train_dataloader))
+    #print(train_features)
+    #print(train_labels)
+    #print(f"Feature batch shape: {train_features.size()}")
+    #for i in range(3):
+    #    img = train_features[i].permute(1, 2, 0)
+    #    label = train_labels[i]
+    #    plt.imshow(img)
+    #    plt.title(label)
+    #    plt.show()
+    #    print(f"Label: {label}")
+
+    #augmented=data_augmentation(train_features[0])
+    #img = train_features[0].permute(1, 2, 0)
+    #plt.imshow(img)
+    #plt.title("original")
+    #plt.show()
+    #plt.savefig('original_image.png')
+    #plt.imshow(augmented.permute(1, 2, 0))
+    #plt.title("augmented")
+    #plt.show()
+    #plt.savefig('augmented_image.png')
+
+    #import ssl
+    #ssl._create_default_https_context = ssl._create_unverified_context
+
+    model=load_model(num_classes, layers_to_train, train_bn_params, update_bn_estimate)
+    print("Model loaded")
+    loss_fn = nn.BCELoss()
+    metric_fns = {'acc': accuracy_fn}
+    optimizer = torch.optim.Adam(model.parameters(), lr=start_learningrate)
+
+    start = time.time()
+    train(train_dataloader, val_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs)
+    end = time.time()
+    print("Time in minutes for training "+str(n_epochs)+" epochs:")
+    print((end - start)/60)
