@@ -125,6 +125,8 @@ def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_
     return model.to(device)
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial):
+    global test_pred
+    global test_truth
     global highest_val_acc
     # training loop
     logdir = './tensorboard/net'
@@ -293,9 +295,9 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
  # Define a set of hyperparameter values, build the model, train the model, and evaluate the accuracy
 def objective(trial):
     params = {
-        'start_learningrate': trial.suggest_loguniform('start_learningrate', 0.0001, 0.1),
+        'start_learningrate': trial.suggest_loguniform('start_learningrate', 0.0001, 0.05),
         'n_epochs': trial.suggest_int('n_epochs',5,15),
-        'batch_size': trial.suggest_categorical('batch_size',[8, 16, 32, 64, 128]),
+        'batch_size': trial.suggest_categorical('batch_size',[64, 128]),
         'layer_to_train_option': trial.suggest_categorical("layer_to_train_option", ["all", "layer3", "fc"]),
         'train_bn_params': trial.suggest_categorical("train_bn_params", [False, True]),
         'update_bn_estimate': trial.suggest_categorical("update_bn_estimate", [False, True])
@@ -321,7 +323,7 @@ def objective(trial):
     start = time.time()
     score = train(train_dataloader, val_dataloader, model, loss_fn, metric_fns, optimizer, params["n_epochs"], trial)
     end = time.time()
-    print("Time in minutes for training "+str(n_epochs)+" epochs:")
+    print("Time in minutes for training "+str(params["n_epochs"])+" epochs:")
     print((end - start)/60)
     return score
 
@@ -386,7 +388,7 @@ if __name__ == "__main__":
     val_data = FaceDataset(data_path+"/"+labelfileprev+"val.csv", data_path, output_category=output_category)
     val_dataloader = DataLoader(val_data, batch_size=128, shuffle=False)
     test_data = FaceDataset(data_path + "/" + labelfileprev + "test.csv", data_path,output_category=output_category)
-    test_dataloader = DataLoader(val_data, batch_size=128, shuffle=False)
+    test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False)
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(),
                                 pruner=optuna.pruners.MedianPruner())
     study.optimize(objective, n_trials=n_optuna_trials)  # -> function given by objective
@@ -395,9 +397,9 @@ if __name__ == "__main__":
         print("{}: {}".format(key, value))
 
     # save predictions TODO file name
-    filename = str(configfilename) + "_" + ct + ".png"
+    filename = str(configfilename) + "_" + ct
     pred_file = open("predictions_"+filename+".pkl", "wb")  # create new file if this doesn't exist yet
-    truth_file = open("groundtruth"+filename+".pkl", "wb")  # create new file if this doesn't exist yet
+    truth_file = open("groundtruth_"+filename+".pkl", "wb")  # create new file if this doesn't exist yet
     pkl.dump(test_pred, pred_file)
     pkl.dump(test_truth, truth_file)
     pred_file.close()

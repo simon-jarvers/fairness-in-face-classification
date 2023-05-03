@@ -6,10 +6,10 @@ batch_size: 64
 start_learningrate: 0.001
 n_epochs: 2
 data_path: "DD2424_data"
-use_short_data_version: True
+use_short_data_version: False
 train_bn_params: False
 update_bn_estimate: False
 use_cut_mix: False
 use_mix_up: False
 p_augment: 0.5
-n_optuna_trials: 1
+n_optuna_trials: 40
