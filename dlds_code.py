@@ -364,6 +364,7 @@ if __name__ == "__main__":
     use_cut_mix = config_dict.get("use_cut_mix", False)
     use_mix_up = config_dict.get("use_mix_up", False)
     p_augment = config_dict.get("p_augment", 0.5)
+    n_optuna_trials = config_dict.get("n_optuna_trials", 1)
 
     if output_category == 'gender':
         num_classes = 2
