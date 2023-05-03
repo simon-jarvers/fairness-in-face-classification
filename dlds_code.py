@@ -25,13 +25,12 @@ import torchvision.transforms as transforms
 import datetime
 import sys
 import yaml
-#import torchvision.transforms.v2 as transforms
+import numpy as np
+import pickle as pkl
 
-
-# from google.colab import drive
-# #drive.mount('/content/drive')
-# drive.mount('/content/drive', force_remount=True)
-
+use_cut_mix=True
+use_mix_up=True
+p_augment=0.5
 
 def np_to_tensor(x, device):
     # allocates tensors from np.arrays
@@ -144,20 +143,24 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             metrics[k] = []
             metrics['val_'+k] = []
 
-        #pbar = tqdm(train_dataloader, desc=f'Epoch {epoch+1}/{n_epochs}')
         # training
         model.train()
         for (x, y) in train_dataloader:#was pbar
             optimizer.zero_grad()  # zero out gradients
             if(use_data_augmentation):
-                x=data_augmentation(x,0.5)
+                x=data_augmentation(x,p_augment)
+            if(use_mix_up or use_cut_mix):
+                indices = torch.randperm(x.size(0))
+                shuffled_x = x[indices]
+                shuffled_y = y[indices]
+                alpha = 0.2
+                dist = torch.distributions.beta.Beta(alpha, alpha)
+                if (np.random.normal() < p_augment and use_cut_mix):
+                    x,y = cutMix(x, y, shuffled_x, shuffled_y, dist)
+                if (np.random.normal() < p_augment and use_mix_up):
+                    x, y = mixUp(x, y, shuffled_x, shuffled_y, dist)
+
             y_hat = model(x)  # forward pass
-            #Frawa: changed for FCN_ResNet
-            #output = model(x)  # forward pass
-            #y_hat = output['out'][:,:1,:,:]
-            #print("prediction vs actual during train")
-            #print(y_hat.shape)
-            #print(y.shape)
             loss = loss_fn(y_hat, y)
             loss.backward()  # backward pass
             optimizer.step()  # optimize weights
@@ -166,19 +169,12 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             metrics['loss'].append(loss.item())
             for k, fn in metric_fns.items():
                 metrics[k].append(fn(y_hat, y).item())
-            #pbar.set_postfix({k: sum(v)/len(v) for k, v in metrics.items() if len(v) > 0})
 
         # validation
         model.eval()
         with torch.no_grad():  # do not keep track of gradients
             for (x, y) in eval_dataloader:
-              #Frawa: changed for FCN_ResNet
                 y_hat = model(x)  # forward pass
-                #print("prediction vs actual during test")
-                #print(y_hat.shape)
-                #print(y.shape)
-                #output = model(x)  # forward pass
-                #y_hat = output['out'][:,:1,:,:]
                 loss = loss_fn(y_hat, y)
                 
                 # log partial metrics
@@ -191,7 +187,6 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         for k, v in history[epoch].items():
           writer.add_scalar(k, v, epoch)
         print(' '.join(['\t- '+str(k)+' = '+str(v)+'\n ' for (k, v) in history[epoch].items()]))
-        #show_val_samples(x.detach().cpu().numpy(), y.detach().cpu().numpy(), y_hat.detach().cpu().numpy())
 
     print('Finished Training')
     ct = str(datetime.datetime.now())
@@ -225,6 +220,13 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         print("Saved "+ metricname+" graph with filename: " + graphname)
         fig2.savefig(graphname)
 
+    with torch.no_grad():  # do not keep track of gradients
+        for (x, y) in eval_dataloader:
+            y_hat = model(x)  # forward pass
+            val_accuracy=accuracy_fn(y_hat,y)
+
+    return val_accuracy #todo accuracy
+
 def accuracy_fn(y_hat, y):
     # computes classification accuracy
     return (y_hat.round() == y.round()).float().mean()
@@ -240,8 +242,50 @@ def data_augmentation(image, prob):
   )
   return translayers(image)
 
+# inspired by https://towardsdatascience.com/cutout-mixup-and-cutmix-implementing-modern-image-augmentations-in-pytorch-a9d7db3074ad
+def cutMix(data_orig, labels, shuffled_data, shuffled_labels, dist):
+    lam = dist.sample()
+    bbx1, bby1, bbx2, bby2 = rand_bbox(data_orig.size(), lam)
+    mixed=data_orig.clone()
+    mixed[:, :, bbx1:bbx2, bby1:bby2] = shuffled_data[:, :, bbx1:bbx2, bby1:bby2]
+    # adjust lambda to exactly match pixel ratio
+    lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (data_orig.size()[-1] * data_orig.size()[-2]))
+    new_targets = [labels, shuffled_labels, lam]
+    return mixed, new_targets
+
+def rand_bbox(size, lam):
+    W = size[2]
+    H = size[3]
+    cut_rat = np.sqrt(1. - lam)
+    cut_w = int(W * cut_rat)
+    cut_h = int(H * cut_rat)
+
+    # uniform
+    cx = np.random.randint(W)
+    cy = np.random.randint(H)
+
+    bbx1 = np.clip(cx - cut_w // 2, 0, W)
+    bby1 = np.clip(cy - cut_h // 2, 0, H)
+    bbx2 = np.clip(cx + cut_w // 2, 0, W)
+    bby2 = np.clip(cy + cut_h // 2, 0, H)
+
+    return bbx1, bby1, bbx2, bby2
+
+# inspired by https://keras.io/examples/vision/mixup/ and https://towardsdatascience.com/cutout-mixup-and-cutmix-implementing-modern-image-augmentations-in-pytorch-a9d7db3074ad
+def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
+    # Sample lambda and reshape it to do the mixup
+    l = dist.sample()
+    print(l)
+    l=0.5
+    x_l = torch.full(data.size(),l)#.to(device=device)
+    y_l = torch.full(labels.size(),l)#.to(device=device)
+    # Perform mixup on both images and labels by combining a pair of images/labels
+    # (one from each dataset) into one image/label
+    images = data * x_l + shuffled_data * (1 - x_l)
+    labels = labels * y_l + shuffled_labels * (1 - y_l)
+    return (images, labels)
+
 if __name__ == "__main__":
-    print(torchvision.__version__)
     if len(sys.argv)>1:
         configfilename = sys.argv[1]
         file = open("configs/"+configfilename + ".yaml", 'r')
@@ -285,12 +329,15 @@ if __name__ == "__main__":
     )
     print("Running on " + device)
 
-    training_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_train.csv", data_path, output_category=output_category)
-    train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=False)
+    training_data = FaceDataset(data_path+"/"+labelfileprev+"train.csv", data_path, output_category=output_category)
+    train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
 
-    val_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_val.csv", data_path, output_category=output_category)
-    val_dataloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
-    print("Datasets loaded")
+    val_data = FaceDataset(data_path+"/"+labelfileprev+"val.csv", data_path, output_category=output_category)
+    val_dataloader = DataLoader(val_data, batch_size=len(val_data), shuffle=False)
+
+    test_data = FaceDataset(data_path + "/" + labelfileprev + "test.csv", data_path,output_category=output_category)
+    test_dataloader = DataLoader(val_data, batch_size=len(test_data), shuffle=False)
+    print("Datasets loaded")#TODO changed paths and lengths
 
     # Display image and label.
     #train_features, train_labels = next(iter(train_dataloader))
@@ -330,3 +377,15 @@ if __name__ == "__main__":
     end = time.time()
     print("Time in minutes for training "+str(n_epochs)+" epochs:")
     print((end - start)/60)
+
+    #save predictions TODO file name
+    pred_file = open(config_string + "predictions.pkl", "wb")  # create new file if this doesn't exist yet
+    truth_file = open(config_string + "groundtruth.pkl", "wb")  # create new file if this doesn't exist yet
+    model.eval()
+    with torch.no_grad():  # do not keep track of gradients
+        for (x, y) in test_dataloader:
+            y_hat = model(x)  # forward pass
+            pkl.dump(y_hat, pred_file)
+            pkl.dump(y, truth_file)
+    pred_file.close()
+    truth_file.close()
