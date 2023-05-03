@@ -125,6 +125,7 @@ def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_
     return model.to(device)
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial):
+    global highest_val_acc
     # training loop
     logdir = './tensorboard/net'
     writer = SummaryWriter(logdir)  # tensorboard writer (can also log images)
@@ -191,10 +192,9 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         print(' '.join(['\t- '+str(k)+' = '+str(v)+'\n ' for (k, v) in history[epoch].items()]))
 
     print('Finished Training')
-
     val_accuracy = history[n_epochs-1]['val_acc']
-    if val_accuracy>highest_val_score:
-        highest_val_score = val_accuracy
+    if val_accuracy > highest_val_acc:
+        highest_val_acc = val_accuracy
         # plot loss curves
         fig, ax = plt.subplots(1)
         ax.plot([v['loss'] for k, v in history.items()], label='Training Loss')
@@ -325,6 +325,8 @@ def objective(trial):
     print((end - start)/60)
     return score
 
+
+
 if __name__ == "__main__":
     device = (
         "cuda"
@@ -380,7 +382,7 @@ if __name__ == "__main__":
 
     test_pred = []
     test_truth = []
-    highest_val_score = 0
+    highest_val_acc = 0
     val_data = FaceDataset(data_path+"/"+labelfileprev+"val.csv", data_path, output_category=output_category)
     val_dataloader = DataLoader(val_data, batch_size=128, shuffle=False)
     test_data = FaceDataset(data_path + "/" + labelfileprev + "test.csv", data_path,output_category=output_category)
