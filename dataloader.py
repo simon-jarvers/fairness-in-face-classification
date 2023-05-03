@@ -34,6 +34,23 @@ class FaceDataset(Dataset):
         return image, label
 
 
+def split_dataset(face_dataset: FaceDataset, train_split: float):
+    df: pd.DataFrame = face_dataset.img_labels
+
+    df_grouped = df.groupby(['service_test', 'gender', 'race'])
+
+    train_set = []
+    for name, group in df_grouped:
+        random_set = group.sample(frac=train_split)
+        train_set.append(random_set)
+
+    df_train = pd.concat(train_set)
+    df_val = pd.concat([df, df_train]).drop_duplicates(keep=False)
+
+    df_train.to_csv('./train.csv', index=False)
+    df_val.to_csv('./val.csv', index=False)
+
+
 def dataset_balance(face_dataset: FaceDataset):
     df: pd.DataFrame = face_dataset.img_labels
 
@@ -41,7 +58,7 @@ def dataset_balance(face_dataset: FaceDataset):
     df_false = df[df['service_test'] == False]
 
     plot_gender_race(df_true, f'Variable service_test is True\nSize of dataset: {df_true.shape[0]}')
-    plot_gender_race(df_false, f'Variable service_test is False\nSize of dataset: {df_true.shape[0]}')
+    plot_gender_race(df_false, f'Variable service_test is False\nSize of dataset: {df_false.shape[0]}')
 
 
 def plot_gender_race(df: pd.DataFrame, title: str):
@@ -70,11 +87,16 @@ def plot_gender_race(df: pd.DataFrame, title: str):
 if __name__ == '__main__':
     training_data = FaceDataset('./fairface_label_train.csv', '.')
 
+    split_dataset(training_data, 0.875)
+
+    training_data = FaceDataset('./train.csv', '.')
     dataset_balance(training_data)
 
-    val_data = FaceDataset('./fairface_label_val.csv', '.')
-
+    val_data = FaceDataset('./val.csv', '.')
     dataset_balance(val_data)
+
+    test_data = FaceDataset('./fairface_label_val.csv', '.')
+    dataset_balance(test_data)
 
     # train_dataloader = DataLoader(training_data, batch_size=64, shuffle=False)
     #
