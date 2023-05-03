@@ -29,10 +29,6 @@ import optuna
 import numpy as np
 import pickle as pkl
 
-use_cut_mix=True
-use_mix_up=True
-p_augment=0.5
-
 def np_to_tensor(x, device):
     # allocates tensors from np.arrays
     if device == 'cpu':
@@ -365,6 +361,9 @@ if __name__ == "__main__":
     use_short_data_version = config_dict.get("use_short_data_version", False)
     train_bn_params = config_dict.get("train_bn_params", True)
     update_bn_estimate = config_dict.get("update_bn_estimate", True)
+    use_cut_mix = config_dict.get("use_cut_mix", False)
+    use_mix_up = config_dict.get("use_mix_up", False)
+    p_augment = config_dict.get("p_augment", 0.5)
 
     if output_category == 'gender':
         num_classes = 2
