@@ -387,7 +387,7 @@ if __name__ == "__main__":
     test_dataloader = DataLoader(val_data, batch_size=128, shuffle=False)
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(),
                                 pruner=optuna.pruners.MedianPruner())
-    study.optimize(objective, n_trials=20)  # -> function given by objective
+    study.optimize(objective, n_trials=n_optuna_trials)  # -> function given by objective
     best_trial = study.best_trial
     for key, value in best_trial.params.items():
         print("{}: {}".format(key, value))
