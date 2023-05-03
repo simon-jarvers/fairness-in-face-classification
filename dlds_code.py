@@ -304,11 +304,11 @@ def objective(trial):
         'train_bn_params': trial.suggest_categorical("train_bn_params", [False, True]),
         'update_bn_estimate': trial.suggest_categorical("update_bn_estimate", [False, True])
     }
-    if layer_to_train_option =="all":
+    if params['layer_to_train_option'] =="all":
         layers_to_train = []
-    elif layer_to_train_option =="layer3":
+    elif params['layer_to_train_option'] =="layer3":
         layers_to_train = ["layer3", "layer4", "fc"]
-    elif layer_to_train_option == "fc":
+    elif params['layer_to_train_option'] == "fc":
         layers_to_train = ["fc"]
     else:
         print("No valid layer_to_train_option")
