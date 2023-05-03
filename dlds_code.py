@@ -25,6 +25,7 @@ import torchvision.transforms as transforms
 import datetime
 import sys
 import yaml
+import optuna
 #import torchvision.transforms.v2 as transforms
 
 
@@ -128,7 +129,7 @@ def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_
         model.apply(set_bn_estimate_to_eval)
     return model.to(device)
 
-def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs):
+def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial):
     # training loop
     logdir = './tensorboard/net'
     writer = SummaryWriter(logdir)  # tensorboard writer (can also log images)
@@ -169,22 +170,21 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             #pbar.set_postfix({k: sum(v)/len(v) for k, v in metrics.items() if len(v) > 0})
 
         # validation
+        acc_sum = 0 #for pruning
         model.eval()
         with torch.no_grad():  # do not keep track of gradients
             for (x, y) in eval_dataloader:
-              #Frawa: changed for FCN_ResNet
                 y_hat = model(x)  # forward pass
-                #print("prediction vs actual during test")
-                #print(y_hat.shape)
-                #print(y.shape)
-                #output = model(x)  # forward pass
-                #y_hat = output['out'][:,:1,:,:]
                 loss = loss_fn(y_hat, y)
-                
                 # log partial metrics
                 metrics['val_loss'].append(loss.item())
                 for k, fn in metric_fns.items():
                     metrics['val_'+k].append(fn(y_hat, y).item())
+                acc_sum += metrics['val_acc'][-1]/len(eval_dataloader)
+            # log loss for pruning
+            trial.report(acc_sum, epoch)
+            if trial.should_prune():
+                raise optuna.exceptions.TrialPruned()
 
         # summarize metrics, log to tensorboard and display
         history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
@@ -240,8 +240,56 @@ def data_augmentation(image, prob):
   )
   return translayers(image)
 
+
+ # Define a set of hyperparameter values, build the model, train the model, and evaluate the accuracy
+def objective(trial):
+    params = {
+        'start_learningrate': trial.suggest_loguniform('start_learningrate', 0.0001, 0.1),
+        'n_epochs': trial.suggest_int('n_epochs',5,15),
+        'batch_size': trial.suggest_categorical('batch_size',[8, 16, 32, 64, 128]),
+        'layer_to_train_option': trial.suggest_categorical("layer_to_train_option", ["all", "layer3", "fc"]),
+        'train_bn_params': trial.suggest_categorical("train_bn_params", [False, True]),
+        'update_bn_estimate': trial.suggest_categorical("update_bn_estimate", [False, True])
+    }
+    if layer_to_train_option =="all":
+        layers_to_train = []
+    elif layer_to_train_option =="layer3":
+        layers_to_train = ["layer3", "layer4", "fc"]
+    elif layer_to_train_option == "fc":
+        layers_to_train = ["fc"]
+    else:
+        print("No valid layer_to_train_option")
+    print("Params in current trial:")
+    print(params)
+    training_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_train.csv", data_path, output_category=output_category)
+    train_dataloader = DataLoader(training_data, batch_size=params['batch_size'], shuffle=False)
+    val_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_val.csv", data_path, output_category=output_category)
+    val_dataloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
+    print("Datasets loaded")
+    model=load_model(num_classes, layers_to_train, params["train_bn_params"], params["update_bn_estimate"])
+    print("Model loaded")
+    loss_fn = nn.BCELoss()
+    metric_fns = {'acc': accuracy_fn}
+    optimizer = torch.optim.Adam(model.parameters(), lr=params["start_learningrate"])
+    start = time.time()
+    score = train(train_dataloader, val_dataloader, model, loss_fn, metric_fns, optimizer, params["n_epochs"], trial)
+    end = time.time()
+    print("Time in minutes for training "+str(n_epochs)+" epochs:")
+    print((end - start)/60)
+    return score
+
 if __name__ == "__main__":
     print(torchvision.__version__)
+    device = (
+        "cuda"
+        if torch.cuda.is_available()
+        else "mps"
+        if torch.backends.mps.is_available()
+        else "cpu"
+    )
+    print("Running on " + device)
+
+
     if len(sys.argv)>1:
         configfilename = sys.argv[1]
         file = open("configs/"+configfilename + ".yaml", 'r')
@@ -264,6 +312,7 @@ if __name__ == "__main__":
     train_bn_params = config_dict.get("train_bn_params", True)
     update_bn_estimate = config_dict.get("update_bn_estimate", True)
 
+
     if output_category == 'gender':
         num_classes = 2
     elif output_category == "race":
@@ -276,57 +325,56 @@ if __name__ == "__main__":
     else:
         labelfileprev = ""
 
-    device = (
-        "cuda"
-        if torch.cuda.is_available()
-        else "mps"
-        if torch.backends.mps.is_available()
-        else "cpu"
-    )
-    print("Running on " + device)
+    if False:
+        training_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_train.csv", data_path, output_category=output_category)
+        train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=False)
 
-    training_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_train.csv", data_path, output_category=output_category)
-    train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=False)
+        val_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_val.csv", data_path, output_category=output_category)
+        val_dataloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
+        print("Datasets loaded")
 
-    val_data = FaceDataset(data_path+"/"+labelfileprev+"fairface_label_val.csv", data_path, output_category=output_category)
-    val_dataloader = DataLoader(val_data, batch_size=batch_size, shuffle=False)
-    print("Datasets loaded")
+        # Display image and label.
+        #train_features, train_labels = next(iter(train_dataloader))
+        #print(train_features)
+        #print(train_labels)
+        #print(f"Feature batch shape: {train_features.size()}")
+        #for i in range(3):
+        #    img = train_features[i].permute(1, 2, 0)
+        #    label = train_labels[i]
+        #    plt.imshow(img)
+        #    plt.title(label)
+        #    plt.show()
+        #    print(f"Label: {label}")
 
-    # Display image and label.
-    #train_features, train_labels = next(iter(train_dataloader))
-    #print(train_features)
-    #print(train_labels)
-    #print(f"Feature batch shape: {train_features.size()}")
-    #for i in range(3):
-    #    img = train_features[i].permute(1, 2, 0)
-    #    label = train_labels[i]
-    #    plt.imshow(img)
-    #    plt.title(label)
-    #    plt.show()
-    #    print(f"Label: {label}")
+        #augmented=data_augmentation(train_features[0])
+        #img = train_features[0].permute(1, 2, 0)
+        #plt.imshow(img)
+        #plt.title("original")
+        #plt.show()
+        #plt.savefig('original_image.png')
+        #plt.imshow(augmented.permute(1, 2, 0))
+        #plt.title("augmented")
+        #plt.show()
+        #plt.savefig('augmented_image.png')
 
-    #augmented=data_augmentation(train_features[0])
-    #img = train_features[0].permute(1, 2, 0)
-    #plt.imshow(img)
-    #plt.title("original")
-    #plt.show()
-    #plt.savefig('original_image.png')
-    #plt.imshow(augmented.permute(1, 2, 0))
-    #plt.title("augmented")
-    #plt.show()
-    #plt.savefig('augmented_image.png')
+        #import ssl
+        #ssl._create_default_https_context = ssl._create_unverified_context
 
-    #import ssl
-    #ssl._create_default_https_context = ssl._create_unverified_context
+        model=load_model(num_classes, layers_to_train, train_bn_params, update_bn_estimate)
+        print("Model loaded")
+        loss_fn = nn.BCELoss()
+        metric_fns = {'acc': accuracy_fn}
+        optimizer = torch.optim.Adam(model.parameters(), lr=start_learningrate)
 
-    model=load_model(num_classes, layers_to_train, train_bn_params, update_bn_estimate)
-    print("Model loaded")
-    loss_fn = nn.BCELoss()
-    metric_fns = {'acc': accuracy_fn}
-    optimizer = torch.optim.Adam(model.parameters(), lr=start_learningrate)
+        start = time.time()
+        train(train_dataloader, val_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs)
+        end = time.time()
+        print("Time in minutes for training "+str(n_epochs)+" epochs:")
+        print((end - start)/60)
 
-    start = time.time()
-    train(train_dataloader, val_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs)
-    end = time.time()
-    print("Time in minutes for training "+str(n_epochs)+" epochs:")
-    print((end - start)/60)
+    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(),
+                                pruner=optuna.pruners.MedianPruner())
+    study.optimize(objective, n_trials=20)  # -> function given by objective
+    best_trial = study.best_trial
+    for key, value in best_trial.params.items():
+        print("{}: {}".format(key, value))
