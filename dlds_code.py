@@ -37,8 +37,11 @@ def np_to_tensor(x, device):
         return torch.from_numpy(x).contiguous().pin_memory().to(device=device, non_blocking=True)
 
 class FaceDataset(Dataset):
-    def __init__(self, annotations_file, img_dir, transform=None, target_transform=None, output_category="gender"):
+    def __init__(self, annotations_file, img_dir, transform=None, target_transform=None, output_category="gender", balanced=False):
         self.img_labels = pd.read_csv(annotations_file)
+        if balanced:
+            df: pd.DataFrame = self.img_labels
+            self.img_labels = df[df['service_test']]
         self.img_dir = img_dir
         self.transform = transform
         self.target_transform = target_transform
@@ -125,8 +128,6 @@ def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_
     return model.to(device)
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial):
-    global test_pred
-    global test_truth
     global highest_val_acc
     # training loop
     logdir = './tensorboard/net'
@@ -231,12 +232,20 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             for (x, y) in test_dataloader:
                 test_pred.append(model(x))  # forward pass
                 test_truth.append(y)
+        # save predictions TODO file name
+        filename = str(configfilename) + "_" + ct
+        pred_file = open("predictions_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
+        truth_file = open("groundtruth_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
+        pkl.dump(test_pred, pred_file)
+        pkl.dump(test_truth, truth_file)
+        pred_file.close()
+        truth_file.close()
 
     return val_accuracy
 
 def accuracy_fn(y_hat, y):
     # computes classification accuracy
-    return (y_hat.round() == y.round()).float().mean()
+    return (torch.argmax(y_hat, dim=1) == torch.argmax(y, dim=1)).float().mean()
 
 # more data augmentation options at https://pytorch.org/vision/stable/transforms.html
 def data_augmentation(image, prob):
@@ -296,7 +305,7 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
 def objective(trial):
     params = {
         'start_learningrate': trial.suggest_loguniform('start_learningrate', 0.0001, 0.05),
-        'n_epochs': trial.suggest_int('n_epochs',5,15),
+        'n_epochs': trial.suggest_int('n_epochs',1,2),#5,15
         'batch_size': trial.suggest_categorical('batch_size',[64, 128]),
         'layer_to_train_option': trial.suggest_categorical("layer_to_train_option", ["all", "layer3", "fc"]),
         'train_bn_params': trial.suggest_categorical("train_bn_params", [False, True]),
@@ -312,7 +321,6 @@ def objective(trial):
         print("No valid layer_to_train_option")
     print("Params in current trial:")
     print(params)
-    training_data = FaceDataset(data_path+"/"+labelfileprev+"train.csv", data_path, output_category=output_category)
     train_dataloader = DataLoader(training_data, batch_size=params['batch_size'], shuffle=True)
     print("Train datasets loaded")
     model=load_model(num_classes, layers_to_train, params["train_bn_params"], params["update_bn_estimate"])
@@ -326,7 +334,6 @@ def objective(trial):
     print("Time in minutes for training "+str(params["n_epochs"])+" epochs:")
     print((end - start)/60)
     return score
-
 
 
 if __name__ == "__main__":
@@ -358,6 +365,7 @@ if __name__ == "__main__":
     layers_to_train = config_dict.get("layers_to_train", [])
     output_category = config_dict.get("output_category", "gender")
     use_data_augmentation=config_dict.get("use_data_augmentation", False)
+    use_balanced_dataset = config_dict.get("use_balanced_dataset", False)
     batch_size=config_dict.get("batch_size", 64)
     start_learningrate = config_dict.get("start_learningrate", 0.001)
     n_epochs = config_dict.get("n_epochs", 15)
@@ -382,12 +390,11 @@ if __name__ == "__main__":
     else:
         labelfileprev = ""
 
-    test_pred = []
-    test_truth = []
     highest_val_acc = 0
-    val_data = FaceDataset(data_path+"/"+labelfileprev+"val.csv", data_path, output_category=output_category)
+    training_data = FaceDataset(data_path+"/"+labelfileprev+"train.csv", data_path, output_category=output_category, balanced=use_balanced_dataset)
+    val_data = FaceDataset(data_path+"/"+labelfileprev+"val.csv", data_path, output_category=output_category, balanced=use_balanced_dataset)
     val_dataloader = DataLoader(val_data, batch_size=128, shuffle=False)
-    test_data = FaceDataset(data_path + "/" + labelfileprev + "test.csv", data_path,output_category=output_category)
+    test_data = FaceDataset(data_path + "/" + labelfileprev + "test.csv", data_path,output_category=output_category, balanced=use_balanced_dataset)
     test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False)
     study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(),
                                 pruner=optuna.pruners.MedianPruner())
@@ -396,11 +403,3 @@ if __name__ == "__main__":
     for key, value in best_trial.params.items():
         print("{}: {}".format(key, value))
 
-    # save predictions TODO file name
-    filename = str(configfilename) + "_" + ct
-    pred_file = open("predictions_"+filename+".pkl", "wb")  # create new file if this doesn't exist yet
-    truth_file = open("groundtruth_"+filename+".pkl", "wb")  # create new file if this doesn't exist yet
-    pkl.dump(test_pred, pred_file)
-    pkl.dump(test_truth, truth_file)
-    pred_file.close()
-    truth_file.close()
