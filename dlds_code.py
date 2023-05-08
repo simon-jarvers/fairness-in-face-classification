@@ -127,8 +127,9 @@ def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_
         model.apply(set_bn_estimate_to_eval)
     return model.to(device)
 
-def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial):
-    global highest_val_acc
+def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial=None):
+    if do_tuning:
+        global highest_val_acc
     # training loop
     logdir = './tensorboard/net'
     writer = SummaryWriter(logdir)  # tensorboard writer (can also log images)
@@ -172,7 +173,8 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 metrics[k].append(fn(y_hat, y).item())
 
         # validation
-        acc_sum = 0 #for pruning
+        if do_tuning:
+            acc_sum = 0 #for pruning
         model.eval()
         with torch.no_grad():  # do not keep track of gradients
             for (x, y) in eval_dataloader:
@@ -182,11 +184,13 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 metrics['val_loss'].append(loss.item())
                 for k, fn in metric_fns.items():
                     metrics['val_'+k].append(fn(y_hat, y).item())
-                acc_sum += metrics['val_acc'][-1]/len(eval_dataloader)
-            # log loss for pruning
-            trial.report(acc_sum, epoch)
-            if trial.should_prune():
-                raise optuna.exceptions.TrialPruned()
+                if do_tuning:
+                    acc_sum += metrics['val_acc'][-1]/len(eval_dataloader)
+            if do_tuning:
+                # log loss for pruning
+                trial.report(acc_sum, epoch)
+                if trial.should_prune():
+                    raise optuna.exceptions.TrialPruned()
 
         # summarize metrics, log to tensorboard and display
         history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
@@ -196,8 +200,9 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
 
     print('Finished Training')
     val_accuracy = history[n_epochs-1]['val_acc']
-    if val_accuracy > highest_val_acc:
-        highest_val_acc = val_accuracy
+    if (not do_tuning) or val_accuracy > highest_val_acc:
+        if do_tuning:
+            highest_val_acc = val_accuracy
         # plot loss curves
         fig, ax = plt.subplots(1)
         ax.plot([v['loss'] for k, v in history.items()], label='Training Loss')
@@ -242,6 +247,7 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         truth_file.close()
 
     return val_accuracy
+
 
 def accuracy_fn(y_hat, y):
     # computes classification accuracy
@@ -305,7 +311,7 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
 def objective(trial):
     params = {
         'start_learningrate': trial.suggest_loguniform('start_learningrate', 0.0001, 0.05),
-        'n_epochs': trial.suggest_int('n_epochs',1,2),#5,15
+        'n_epochs': trial.suggest_int('n_epochs',5,15),
         'batch_size': trial.suggest_categorical('batch_size',[64, 128]),
         'layer_to_train_option': trial.suggest_categorical("layer_to_train_option", ["all", "layer3", "fc"]),
         'train_bn_params': trial.suggest_categorical("train_bn_params", [False, True]),
@@ -377,6 +383,7 @@ if __name__ == "__main__":
     use_mix_up = config_dict.get("use_mix_up", False)
     p_augment = config_dict.get("p_augment", 0.5)
     n_optuna_trials = config_dict.get("n_optuna_trials", 1)
+    do_tuning = config_dict.get("do_tuning", False)
 
     if output_category == 'gender':
         num_classes = 2
@@ -390,16 +397,39 @@ if __name__ == "__main__":
     else:
         labelfileprev = ""
 
-    highest_val_acc = 0
-    training_data = FaceDataset(data_path+"/"+labelfileprev+"train.csv", data_path, output_category=output_category, balanced=use_balanced_dataset)
-    val_data = FaceDataset(data_path+"/"+labelfileprev+"val.csv", data_path, output_category=output_category, balanced=use_balanced_dataset)
+    if use_short_data_version:
+        training_data = FaceDataset(data_path + "/" + labelfileprev + "fairface_label_train.csv", data_path,
+                                    output_category=output_category, balanced=use_balanced_dataset)
+        val_data = FaceDataset(data_path + "/" + labelfileprev + "fairface_label_val.csv", data_path, output_category=output_category,
+                               balanced=use_balanced_dataset)
+        test_data = FaceDataset(data_path + "/test.csv", data_path,
+                                output_category=output_category, balanced=use_balanced_dataset)
+    else:
+        training_data = FaceDataset(data_path+"/train.csv", data_path, output_category=output_category, balanced=use_balanced_dataset)
+        val_data = FaceDataset(data_path+"/val.csv", data_path, output_category=output_category, balanced=use_balanced_dataset)
+        test_data = FaceDataset(data_path + "/test.csv", data_path,output_category=output_category, balanced=use_balanced_dataset)
     val_dataloader = DataLoader(val_data, batch_size=128, shuffle=False)
-    test_data = FaceDataset(data_path + "/" + labelfileprev + "test.csv", data_path,output_category=output_category, balanced=use_balanced_dataset)
     test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False)
-    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(),
-                                pruner=optuna.pruners.MedianPruner())
-    study.optimize(objective, n_trials=n_optuna_trials)  # -> function given by objective
-    best_trial = study.best_trial
-    for key, value in best_trial.params.items():
-        print("{}: {}".format(key, value))
+    if do_tuning:
+        highest_val_acc = 0
+        study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(),
+                                    pruner=optuna.pruners.MedianPruner())
+        study.optimize(objective, n_trials=n_optuna_trials)  # -> function given by objective
+        best_trial = study.best_trial
+        for key, value in best_trial.params.items():
+            print("{}: {}".format(key, value))
+    else:
+        train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
+        print("Datasets loaded")
+        model = load_model(num_classes, layers_to_train, train_bn_params, update_bn_estimate)
+        print("Model loaded")
+        loss_fn = nn.BCELoss()
+        metric_fns = {'acc': accuracy_fn}
+        optimizer = torch.optim.Adam(model.parameters(), lr=start_learningrate)
+        start = time.time()
+        score = train(train_dataloader, val_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs)
+        end = time.time()
+        print("Time in minutes for training " + str(n_epochs) + " epochs:")
+        print((end - start) / 60)
+
 
