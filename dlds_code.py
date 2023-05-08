@@ -272,7 +272,8 @@ def cutMix(data_orig, labels, shuffled_data, shuffled_labels, dist):
     mixed[:, :, bbx1:bbx2, bby1:bby2] = shuffled_data[:, :, bbx1:bbx2, bby1:bby2]
     # adjust lambda to exactly match pixel ratio
     lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (data_orig.size()[-1] * data_orig.size()[-2]))
-    new_targets = [labels, shuffled_labels, lam]
+    y_l = torch.full(labels.size(), lam).to(device=device)
+    new_targets = labels * y_l + shuffled_labels * (1 - y_l)
     return mixed, new_targets
 
 def rand_bbox(size, lam):
@@ -299,8 +300,8 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
     l = dist.sample()
     print(l)
     l=0.5
-    x_l = torch.full(data.size(),l)#.to(device=device)
-    y_l = torch.full(labels.size(),l)#.to(device=device)
+    x_l = torch.full(data.size(),l).to(device=device)
+    y_l = torch.full(labels.size(),l).to(device=device)
     # Perform mixup on both images and labels by combining a pair of images/labels
     # (one from each dataset) into one image/label
     images = data * x_l + shuffled_data * (1 - x_l)
@@ -310,10 +311,10 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
  # Define a set of hyperparameter values, build the model, train the model, and evaluate the accuracy
 def objective(trial):
     params = {
-        'start_learningrate': trial.suggest_loguniform('start_learningrate', 0.0001, 0.05),
+        'start_learningrate': trial.suggest_loguniform('start_learningrate', 0.0001, 0.002),
         'n_epochs': trial.suggest_int('n_epochs',5,15),
         'batch_size': trial.suggest_categorical('batch_size',[64, 128]),
-        'layer_to_train_option': trial.suggest_categorical("layer_to_train_option", ["all", "layer3", "fc"]),
+        'layer_to_train_option': trial.suggest_categorical("layer_to_train_option", ["all", "layer3"]),
         'train_bn_params': trial.suggest_categorical("train_bn_params", [False, True]),
         'update_bn_estimate': trial.suggest_categorical("update_bn_estimate", [False, True])
     }
