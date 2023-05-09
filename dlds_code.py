@@ -129,7 +129,7 @@ def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial=None):
     if do_tuning:
-        global highest_val_acc
+        global lowest_val_loss
     # training loop
     logdir = './tensorboard/net'
     writer = SummaryWriter(logdir)  # tensorboard writer (can also log images)
@@ -174,7 +174,7 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
 
         # validation
         if do_tuning:
-            acc_sum = 0 #for pruning
+            loss_sum = 0 #for pruning
         model.eval()
         with torch.no_grad():  # do not keep track of gradients
             for (x, y) in eval_dataloader:
@@ -185,10 +185,10 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 for k, fn in metric_fns.items():
                     metrics['val_'+k].append(fn(y_hat, y).item())
                 if do_tuning:
-                    acc_sum += metrics['val_acc'][-1]/len(eval_dataloader)
+                    loss_sum += metrics['val_loss'][-1]/len(eval_dataloader)
             if do_tuning:
                 # log loss for pruning
-                trial.report(acc_sum, epoch)
+                trial.report(loss_sum, epoch)
                 if trial.should_prune():
                     raise optuna.exceptions.TrialPruned()
 
@@ -199,10 +199,10 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         print(' '.join(['\t- '+str(k)+' = '+str(v)+'\n ' for (k, v) in history[epoch].items()]))
 
     print('Finished Training')
-    val_accuracy = history[n_epochs-1]['val_acc']
-    if (not do_tuning) or val_accuracy > highest_val_acc:
+    val_loss = history[n_epochs-1]['val_loss']
+    if (not do_tuning) or val_loss < lowest_val_loss:
         if do_tuning:
-            highest_val_acc = val_accuracy
+            lowest_val_loss = val_loss
         # plot loss curves
         fig, ax = plt.subplots(1)
         ax.plot([v['loss'] for k, v in history.items()], label='Training Loss')
@@ -246,7 +246,7 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         pred_file.close()
         truth_file.close()
 
-    return val_accuracy
+    return lowest_val_loss
 
 
 def accuracy_fn(y_hat, y):
@@ -412,8 +412,8 @@ if __name__ == "__main__":
     val_dataloader = DataLoader(val_data, batch_size=128, shuffle=False)
     test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False)
     if do_tuning:
-        highest_val_acc = 0
-        study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(),
+        lowest_val_loss = 1
+        study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(),
                                     pruner=optuna.pruners.MedianPruner())
         study.optimize(objective, n_trials=n_optuna_trials)  # -> function given by objective
         best_trial = study.best_trial
