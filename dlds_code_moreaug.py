@@ -57,10 +57,10 @@ class FaceDataset(Dataset):
         #one-hot-encoding
         #label=torch.tensor(int(self.img_labels.iloc[idx, 2]=='Female'))
         #label=torch.nn.functional.one_hot(label,num_classes=2)
-        if self.output_category == "gender" or "combined":
+        if self.output_category == "gender" or self.output_category == "combined":
             label = torch.tensor(int(self.img_labels.iloc[idx, 2] == 'Female'))
             gender_label = torch.nn.functional.one_hot(label, num_classes=2)
-        if self.output_category == "race" or "combined":
+        if self.output_category == "race" or self.output_category == "combined":
             ethnicity = self.img_labels.iloc[idx, 3]
             label = 0
             if ethnicity == 'Black':
@@ -84,12 +84,12 @@ class FaceDataset(Dataset):
         else:
             print("no valid output_category")
         if(self.output_category == "gender"):
-            label=gender_label
+            label=gender_label.float().to(device=device, non_blocking=True)
         if(self.output_category == "race"):
-            label = ethnicity_label
+            label = ethnicity_label.float().to(device=device, non_blocking=True)
         if (self.output_category == "combined"):
-            label = (ethnicity_label, gender_label)
-        label=label.float().to(device=device, non_blocking=True)
+            label = (ethnicity_label.float().to(device=device, non_blocking=True), gender_label.float().to(device=device, non_blocking=True))
+        #label=label.float().to(device=device, non_blocking=True)
         if self.transform:
             image = self.transform(image)
         if self.target_transform:
@@ -137,7 +137,8 @@ class FaceResNet18(nn.Module):
   def __init__(self):
         super().__init__()
         #load pretrained model
-        self.net = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
+        self.net = torchvision.models.resnet18(pretrained=True)
+        #torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
         #build the two prediction heads for multi task learning
         self.net.fc = nn.Identity()
         self.net.fc_race = torch.nn.Sequential(torch.nn.Linear(in_features=512, out_features=7, bias=True), torch.nn.Softmax(dim=1))
@@ -147,7 +148,7 @@ class FaceResNet18(nn.Module):
   def forward(self, x):
         gender_head = self.net.fc_gender(self.net(x))
         ethnicity_head = self.net.fc_race(self.net(x))
-        return gender_head, ethnicity_head
+        return (ethnicity_head, gender_head)
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial=None):
     #if do_tuning:
@@ -171,8 +172,13 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         model.train()
         for (x, y) in train_dataloader:#was pbar
             optimizer.zero_grad()  # zero out gradients
-            x_aug=x.clone()
-            y_aug=y.clone()
+            if(output_category=='combined'):
+                x_aug = x.clone()
+                y_race_aug, y_gender_aug = y[0].clone(),y[1].clone()
+                y_aug=y_race_aug, y_gender_aug
+            else:
+                x_aug=x.clone()
+                y_aug=y.clone()
             if(use_data_augmentation):
                 x_aug=data_augmentation(x_aug,p_augment)
             if(use_mix_up or use_cut_mix):
@@ -338,7 +344,7 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
     labels = labels * y_l + shuffled_labels * (1 - y_l)
     return (images, labels)
 
-def bce_loss(y, yhat):
+def bce_loss(yhat, y):
     if(type(yhat) is tuple):
         race_label,gender_label=y
         race_label_hat,gender_label_hat=yhat
@@ -382,7 +388,6 @@ def objective(trial):
     print("Time in minutes for training "+str(params["n_epochs"])+" epochs:")
     print((end - start)/60)
     return score
-
 
 if __name__ == "__main__":
     device = (
@@ -431,6 +436,8 @@ if __name__ == "__main__":
         num_classes = 2
     elif output_category == "race":
         num_classes=7
+    elif output_category == "combined":
+        num_classes = [7,2]
     else:
         print("Invalid output_category")
 
