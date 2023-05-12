@@ -128,8 +128,8 @@ def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_
     return model.to(device)
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial=None):
-    if do_tuning:
-        global lowest_val_loss
+    #if do_tuning:
+    global lowest_val_loss
     # training loop
     logdir = './tensorboard/net'
     writer = SummaryWriter(logdir)  # tensorboard writer (can also log images)
@@ -149,8 +149,10 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         model.train()
         for (x, y) in train_dataloader:#was pbar
             optimizer.zero_grad()  # zero out gradients
+            x_aug=x.clone()
+            y_aug=y.clone()
             if(use_data_augmentation):
-                x=data_augmentation(x,p_augment)
+                x_aug=data_augmentation(x_aug,p_augment)
             if(use_mix_up or use_cut_mix):
                 indices = torch.randperm(x.size(0))
                 shuffled_x = x[indices]
@@ -158,12 +160,12 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 alpha = 0.2
                 dist = torch.distributions.beta.Beta(alpha, alpha)
                 if (np.random.normal() < p_augment and use_cut_mix):
-                    x,y = cutMix(x, y, shuffled_x, shuffled_y, dist)
+                    x_aug,y_aug = cutMix(x_aug, y_aug, shuffled_x, shuffled_y, dist)
                 if (np.random.normal() < p_augment and use_mix_up):
-                    x, y = mixUp(x, y, shuffled_x, shuffled_y, dist)
+                    x_aug, y_aug = mixUp(x_aug, y_aug, shuffled_x, shuffled_y, dist)
 
-            y_hat = model(x)  # forward pass
-            loss = loss_fn(y_hat, y)
+            y_hat = model(x_aug)  # forward pass
+            loss = loss_fn(y_hat, y_aug)
             loss.backward()  # backward pass
             optimizer.step()  # optimize weights
             #print("step")
@@ -173,8 +175,8 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 metrics[k].append(fn(y_hat, y).item())
 
         # validation
-        if do_tuning:
-            loss_sum = 0 #for pruning
+        #if do_tuning:
+        loss_sum = 0 #for pruning
         model.eval()
         with torch.no_grad():  # do not keep track of gradients
             for (x, y) in eval_dataloader:
@@ -184,7 +186,7 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 metrics['val_loss'].append(loss.item())
                 for k, fn in metric_fns.items():
                     metrics['val_'+k].append(fn(y_hat, y).item())
-                if do_tuning:
+                #if do_tuning:
                     loss_sum += metrics['val_loss'][-1]/len(eval_dataloader)
             if do_tuning:
                 # log loss for pruning
@@ -258,10 +260,18 @@ def data_augmentation(image, prob):
   translayers = transforms.RandomApply(
       torch.nn.Sequential(
         torchvision.transforms.RandomHorizontalFlip(0.5),
-        torchvision.transforms.ColorJitter(0.1, 0.12, 0.1, 0.05),
-        torchvision.transforms.RandomRotation(8)
+        torchvision.transforms.ColorJitter(0.2, 0.15, 0.15, 0.05),
+        #torchvision.transforms.RandomRotation(8),
+        transforms.RandomAffine(6, translate=(0.1,0.1), shear=5),
+        transforms.RandomApply(
+            torch.nn.Sequential(
+            transforms.RandomCrop(200),
+            transforms.Resize(256)
+            ),p=0.4
+        )
         ), p=prob
   )
+
   return translayers(image)
 
 # inspired by https://towardsdatascience.com/cutout-mixup-and-cutmix-implementing-modern-image-augmentations-in-pytorch-a9d7db3074ad
