@@ -140,7 +140,7 @@ def set_bn_estimate_to_eval(module):
 #     return model.to(device)
 
 class FaceResNet18(nn.Module):
-  def __init__(self):
+  def __init__(self, output_category, layers_to_train=[], train_bn_params=True, update_bn_estimate=True):
         super().__init__()
         #load pretrained model
         self.net = torchvision.models.resnet18(pretrained=True)
@@ -149,6 +149,23 @@ class FaceResNet18(nn.Module):
         self.net.fc = nn.Identity()
         self.net.fc_race = torch.nn.Sequential(torch.nn.Linear(in_features=512, out_features=7, bias=True), torch.nn.Softmax(dim=1))
         self.net.fc_gender = torch.nn.Sequential(torch.nn.Linear(in_features=512, out_features=2, bias=True), torch.nn.Softmax(dim=1))
+
+        #specify which layers to train
+        if layers_to_train!=[]:
+            for param in self.net.parameters():
+                param.requires_grad = False
+            for l in layers_to_train:
+                #print(getattr(model, l))
+                for param in getattr(self.net, l).parameters():
+                    param.requires_grad = True
+                for param in self.net.fc_gender.parameters():
+                    param.requires_grad = True
+                for param in self.net.fc_race.parameters():
+                    param.requires_grad = True
+        if not train_bn_params:
+            self.net.apply(freeze_bn_module_params)
+        if not update_bn_estimate:
+            self.net.apply(set_bn_estimate_to_eval)
         print(self)
 
   def forward(self, x):
@@ -390,7 +407,7 @@ def objective(trial):
     train_dataloader = DataLoader(training_data, batch_size=params['batch_size'], shuffle=True)
     print("Train datasets loaded")
     #model=load_model(num_classes, layers_to_train, params["train_bn_params"], params["update_bn_estimate"])
-    model = FaceResNet18().to(device=device)
+    model = FaceResNet18(output_category, layers_to_train, params["train_bn_params"], params["update_bn_estimate"]).to(device=device)
     print("Model loaded")
     loss_fn = bce_loss
     metric_fns = {'acc': accuracy_fn}
@@ -484,7 +501,7 @@ if __name__ == "__main__":
         train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
         print("Datasets loaded")
         #model = load_model(num_classes, layers_to_train, train_bn_params, update_bn_estimate)
-        model = FaceResNet18().to(device=device)
+        model = FaceResNet18(output_category, layers_to_train, train_bn_params, update_bn_estimate).to(device=device)
         print("Model loaded")
         loss_fn = bce_loss
         metric_fns = {'acc': accuracy_fn}
