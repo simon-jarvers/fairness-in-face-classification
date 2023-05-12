@@ -60,6 +60,8 @@ class FaceDataset(Dataset):
         if self.output_category == "gender" or self.output_category == "combined":
             label = torch.tensor(int(self.img_labels.iloc[idx, 2] == 'Female'))
             gender_label = torch.nn.functional.one_hot(label, num_classes=2)
+            print("label gender")
+            print(gender_label)
         if self.output_category == "race" or self.output_category == "combined":
             ethnicity = self.img_labels.iloc[idx, 3]
             label = 0
@@ -81,14 +83,18 @@ class FaceDataset(Dataset):
                 print("Problem: ethnicity label not known for index " + str(idx))
             label = torch.tensor(label)
             ethnicity_label = torch.nn.functional.one_hot(label, num_classes=7)
-        else:
-            print("no valid output_category")
+            print("label ethnicity")
+            print(ethnicity_label)
         if(self.output_category == "gender"):
             label=gender_label.float().to(device=device, non_blocking=True)
-        if(self.output_category == "race"):
+        elif(self.output_category == "race"):
             label = ethnicity_label.float().to(device=device, non_blocking=True)
-        if (self.output_category == "combined"):
+        elif (self.output_category == "combined"):
             label = (ethnicity_label.float().to(device=device, non_blocking=True), gender_label.float().to(device=device, non_blocking=True))
+            print("label combined")
+            print(label)
+        else:
+            print("no valid output_category")
         #label=label.float().to(device=device, non_blocking=True)
         if self.transform:
             image = self.transform(image)
@@ -174,8 +180,10 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             optimizer.zero_grad()  # zero out gradients
             if(output_category=='combined'):
                 x_aug = x.clone()
-                y_race_aug, y_gender_aug = y[0].clone(),y[1].clone()
-                y_aug=y_race_aug, y_gender_aug
+                y_race_aug, y_gender_aug = (y[0].clone(),y[1].clone())
+                y_aug=(y_race_aug, y_gender_aug)
+                print("y aug train")
+                print(y_aug)
             else:
                 x_aug=x.clone()
                 y_aug=y.clone()
@@ -345,11 +353,16 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
     return (images, labels)
 
 def bce_loss(yhat, y):
+    print(y)
+    print(yhat)
     if(type(yhat) is tuple):
-        race_label,gender_label=y
+        race_label,gender_label=y[0],y[1]
+        print(race_label)
         race_label_hat,gender_label_hat=yhat
-        l1=nn.BCELoss(race_label_hat, race_label)
-        l2=nn.BCELoss(gender_label_hat, gender_label)
+        print(race_label_hat)
+        loss_fn=nn.BCELoss()
+        l1=loss_fn(race_label_hat, race_label)
+        l2=loss_fn(gender_label_hat, gender_label)
         return (l1+l2)/2
     else:
         return nn.BCELoss(yhat, y)
