@@ -199,8 +199,8 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 x_aug = x.clone()
                 y_race_aug, y_gender_aug = (y[0].clone(),y[1].clone())
                 y_aug=(y_race_aug, y_gender_aug)
-                print("y aug train")
-                print(y_aug)
+                #print("y aug train")
+                #print(y_aug)
             else:
                 x_aug=x.clone()
                 y_aug=y.clone()
@@ -209,7 +209,13 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             if(use_mix_up or use_cut_mix):
                 indices = torch.randperm(x.size(0))
                 shuffled_x = x[indices]
-                shuffled_y = y[indices]
+                if (output_category == 'combined'):
+                    y_race, y_gender = (y[0], y[1])
+                    shuffled_y_race = y_race[indices]
+                    shuffled_y_gender = y_gender[indices]
+                    shuffled_y=(shuffled_y_race,shuffled_y_gender)
+                else:
+                    shuffled_y=y[indices]
                 alpha = 0.2
                 dist = torch.distributions.beta.Beta(alpha, alpha)
                 if (np.random.normal() < p_augment and use_cut_mix):
@@ -334,7 +340,14 @@ def cutMix(data_orig, labels, shuffled_data, shuffled_labels, dist):
     # adjust lambda to exactly match pixel ratio
     lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (data_orig.size()[-1] * data_orig.size()[-2]))
     y_l = torch.full(labels.size(), lam).to(device=device)
-    new_targets = labels * y_l + shuffled_labels * (1 - y_l)
+    if (type(labels[0]) is tuple):
+        race_label, gender_label = labels[:,0], labels[:,1]
+        race_label_shuff, gender_label_shuff = shuffled_labels[:,0], shuffled_labels[:,1]
+        new_targets_race = race_label * y_l + race_label_shuff * (1 - y_l)
+        new_targets_gender = gender_label * y_l + gender_label_shuff * (1 - y_l)
+        new_targets=(new_targets_race,new_targets_gender)
+    else:
+        new_targets = labels * y_l + shuffled_labels * (1 - y_l)
     return mixed, new_targets
 
 def rand_bbox(size, lam):
@@ -359,24 +372,31 @@ def rand_bbox(size, lam):
 def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
     # Sample lambda and reshape it to do the mixup
     l = dist.sample()
-    print(l)
+    #print(l)
     l=0.5
     x_l = torch.full(data.size(),l).to(device=device)
     y_l = torch.full(labels.size(),l).to(device=device)
     # Perform mixup on both images and labels by combining a pair of images/labels
     # (one from each dataset) into one image/label
     images = data * x_l + shuffled_data * (1 - x_l)
-    labels = labels * y_l + shuffled_labels * (1 - y_l)
+    if (type(labels[0]) is tuple):
+        race_label, gender_label = labels[:,0], labels[:,1]
+        race_label_shuff, gender_label_shuff = shuffled_labels[:,0], shuffled_labels[:,1]
+        new_targets_race = race_label * y_l + race_label_shuff * (1 - y_l)
+        new_targets_gender = gender_label * y_l + gender_label_shuff * (1 - y_l)
+        labels=(new_targets_race,new_targets_gender)
+    else:
+        labels = labels * y_l + shuffled_labels * (1 - y_l)
     return (images, labels)
 
 def bce_loss(yhat, y):
-    print(y)
-    print(yhat)
+    #print(y)
+    #print(yhat)
     if(type(yhat) is tuple):
         race_label,gender_label=y[0],y[1]
-        print(race_label)
+        #print(race_label)
         race_label_hat,gender_label_hat=yhat
-        print(race_label_hat)
+        #print(race_label_hat)
         loss_fn=nn.BCELoss()
         l1=loss_fn(race_label_hat, race_label)
         l2=loss_fn(gender_label_hat, gender_label)
