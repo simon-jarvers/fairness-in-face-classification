@@ -60,8 +60,8 @@ class FaceDataset(Dataset):
         if self.output_category == "gender" or self.output_category == "combined":
             label = torch.tensor(int(self.img_labels.iloc[idx, 2] == 'Female'))
             gender_label = torch.nn.functional.one_hot(label, num_classes=2)
-            print("label gender")
-            print(gender_label)
+            #print("label gender")
+            #print(gender_label)
         if self.output_category == "race" or self.output_category == "combined":
             ethnicity = self.img_labels.iloc[idx, 3]
             label = 0
@@ -83,16 +83,16 @@ class FaceDataset(Dataset):
                 print("Problem: ethnicity label not known for index " + str(idx))
             label = torch.tensor(label)
             ethnicity_label = torch.nn.functional.one_hot(label, num_classes=7)
-            print("label ethnicity")
-            print(ethnicity_label)
+            #print("label ethnicity")
+            #print(ethnicity_label)
         if(self.output_category == "gender"):
             label=gender_label.float().to(device=device, non_blocking=True)
         elif(self.output_category == "race"):
             label = ethnicity_label.float().to(device=device, non_blocking=True)
         elif (self.output_category == "combined"):
             label = (ethnicity_label.float().to(device=device, non_blocking=True), gender_label.float().to(device=device, non_blocking=True))
-            print("label combined")
-            print(label)
+            #print("label combined")
+            #print(label)
         else:
             print("no valid output_category")
         #label=label.float().to(device=device, non_blocking=True)
@@ -199,8 +199,8 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 x_aug = x.clone()
                 y_race_aug, y_gender_aug = (y[0].clone(),y[1].clone())
                 y_aug=(y_race_aug, y_gender_aug)
-                print("y aug train")
-                print(y_aug)
+                #print("y aug train")
+                #print(y_aug)
             else:
                 x_aug=x.clone()
                 y_aug=y.clone()
@@ -225,7 +225,9 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             # log partial metrics
             metrics['loss'].append(loss.item())
             for k, fn in metric_fns.items():
-                metrics[k].append(fn(y_hat, y).item())
+                # metrics[k].append(fn(y_hat, y).item())
+                metrics[k].append(fn(y_hat, y).item() if type(fn(y_hat, y)) is not tuple else
+                                  tuple([el.item() for el in fn(y_hat, y)]))
 
         # validation
         #if do_tuning:
@@ -238,7 +240,9 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 # log partial metrics
                 metrics['val_loss'].append(loss.item())
                 for k, fn in metric_fns.items():
-                    metrics['val_'+k].append(fn(y_hat, y).item())
+                    #metrics['val_'+k].append(fn(y_hat, y).item())
+                    metrics['val_' + k].append(fn(y_hat, y).item() if type(fn(y_hat, y)) is not tuple else
+                                               tuple([el.item() for el in fn(y_hat, y)]))
                 #if do_tuning:
                     loss_sum += metrics['val_loss'][-1]/len(eval_dataloader)
             if do_tuning:
@@ -248,16 +252,27 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                     raise optuna.exceptions.TrialPruned()
 
         # summarize metrics, log to tensorboard and display
-        history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
-        for k, v in history[epoch].items():
-          writer.add_scalar(k, v, epoch)
+        if type(metrics['acc']) is not tuple:
+            history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
+        else:
+            history[epoch] = {'loss': sum(metrics['loss'])/len(metrics['loss']),
+                              'val_loss': sum(metrics['val_loss'])/len(metrics['val_loss']),
+                              'acc':(sum(i for i, _, _ in metrics['acc'])/len(metrics['acc']),
+                                     sum(i for _, i, _ in metrics['acc'])/len(metrics['acc']),
+                                     sum(i for _, _, i in metrics['acc'])/len(metrics['acc'])),
+                              'val_acc':(sum(i for i, _, _ in metrics['val_acc'])/len(metrics['val_acc']),
+                                         sum(i for _, i, _ in metrics['val_acc'])/len(metrics['val_acc']),
+                                         sum(i for _, _, i in metrics['val_acc'])/len(metrics['val_acc']))
+                          }
+        #for k, v in history[epoch].items():
+        #  writer.add_scalar(k, v, epoch)
         print(' '.join(['\t- '+str(k)+' = '+str(v)+'\n ' for (k, v) in history[epoch].items()]))
 
     print('Finished Training')
     val_loss = history[n_epochs-1]['val_loss']
     if (not do_tuning) or val_loss < lowest_val_loss:
         lowest_val_loss = val_loss
-        # plot loss curves
+        # plot loss curve
         fig, ax = plt.subplots(1)
         ax.plot([v['loss'] for k, v in history.items()], label='Training Loss')
         ax.plot([v['val_loss'] for k, v in history.items()], label='Validation Loss')
@@ -272,18 +287,56 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         fig.savefig(graphname)
         #plot other metrics
         for metricname, _ in metric_fns.items():
-            fig2, ax2 = plt.subplots(1)
-            ax2.plot([v[metricname] for k, v in history.items()], label=('Training ' + metricname))
-            ax2.plot([v['val_' + metricname] for k, v in history.items()], label=('Validation ' + metricname))
-            ax2.set_ylabel(metricname)
-            ax2.set_xlabel('Epochs')
-            ax2.set_title(str(metricname + " for config file= " + str(configfilename)))
-            ax2.legend()
-            # fig2.show()
-            graphname = metricname + "_graph_" + str(configfilename) + "_" + ct + ".png"
-            print("Saved " + metricname + " graph with filename: " + graphname)
-            fig2.savefig(graphname)
-
+            if type(history[0][metricname]) is not tuple:
+                fig2, ax2 = plt.subplots(1)
+                ax2.plot([v[metricname] for k, v in history.items()], label=('Training ' + metricname))
+                ax2.plot([v['val_' + metricname] for k, v in history.items()], label=('Validation ' + metricname))
+                ax2.set_ylabel(metricname)
+                ax2.set_xlabel('Epochs')
+                ax2.set_title(str(metricname + " for config file= " + str(configfilename)))
+                ax2.legend()
+                # fig2.show()
+                graphname = metricname + "_graph_" + str(configfilename) + "_" + ct + ".png"
+                print("Saved " + metricname + " graph with filename: " + graphname)
+                fig2.savefig(graphname)
+            else:
+                #race
+                fig2, ax2 = plt.subplots(1)
+                ax2.plot([v[metricname][0] for k, v in history.items()], label=('Training ' + metricname + ' for race'))
+                ax2.plot([v['val_' + metricname][0] for k, v in history.items()], label=('Validation ' + metricname+ ' for race'))
+                ax2.set_ylabel(metricname)
+                ax2.set_xlabel('Epochs')
+                ax2.set_title(str(metricname + " for race for config file= " + str(configfilename)))
+                ax2.legend()
+                # fig2.show()
+                graphname = metricname + "_race_graph_" + str(configfilename) + "_" + ct + ".png"
+                print("Saved " + metricname + " graph with filename: " + graphname)
+                fig2.savefig(graphname)
+                #gender
+                fig2, ax2 = plt.subplots(1)
+                ax2.plot([v[metricname][1] for k, v in history.items()], label=('Training ' + metricname + ' for gender'))
+                ax2.plot([v['val_' + metricname][1] for k, v in history.items()], label=('Validation ' + metricname+ 'for gender'))
+                ax2.set_ylabel(metricname)
+                ax2.set_xlabel('Epochs')
+                ax2.set_title(str(metricname + " for gender for config file= " + str(configfilename)))
+                ax2.legend()
+                # fig2.show()
+                graphname = metricname + "_gender_graph_" + str(configfilename) + "_" + ct + ".png"
+                print("Saved " + metricname + " graph with filename: " + graphname)
+                fig2.savefig(graphname)
+                fig2.savefig(graphname)
+                #combined
+                fig2, ax2 = plt.subplots(1)
+                ax2.plot([v[metricname][2] for k, v in history.items()], label=('Training ' + metricname + ' for combined'))
+                ax2.plot([v['val_' + metricname][2] for k, v in history.items()], label=('Validation ' + metricname+ ' for combined'))
+                ax2.set_ylabel(metricname)
+                ax2.set_xlabel('Epochs')
+                ax2.set_title(str(metricname + " for combined for config file= " + str(configfilename)))
+                ax2.legend()
+                # fig2.show()
+                graphname = metricname + "_combined_graph_" + str(configfilename) + "_" + ct + ".png"
+                print("Saved " + metricname + " graph with filename: " + graphname)
+                fig2.savefig(graphname)
         test_pred = []
         test_truth = []
         model.eval()
@@ -304,7 +357,16 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
 
 def accuracy_fn(y_hat, y):
     # computes classification accuracy
-    return (torch.argmax(y_hat, dim=1) == torch.argmax(y, dim=1)).float().mean()
+    if type(y_hat) is tuple:
+        race_label, gender_label = y[0], y[1]
+        # print(race_label)
+        race_label_hat, gender_label_hat = y_hat
+        # print(race_label_hat)
+        acc_race = (torch.argmax(race_label_hat, dim=1) == torch.argmax(race_label, dim=1)).float().mean()
+        acc_gender = (torch.argmax(gender_label_hat, dim=1) == torch.argmax(gender_label, dim=1)).float().mean()
+        return (acc_race, acc_gender, (acc_race+acc_gender)/2)
+    else:
+        return (torch.argmax(y_hat, dim=1) == torch.argmax(y, dim=1)).float().mean()
 
 # more data augmentation options at https://pytorch.org/vision/stable/transforms.html
 def data_augmentation(image, prob):
@@ -370,13 +432,13 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
     return (images, labels)
 
 def bce_loss(yhat, y):
-    print(y)
-    print(yhat)
+    #print(y)
+    #print(yhat)
     if(type(yhat) is tuple):
         race_label,gender_label=y[0],y[1]
-        print(race_label)
+        #print(race_label)
         race_label_hat,gender_label_hat=yhat
-        print(race_label_hat)
+        #print(race_label_hat)
         loss_fn=nn.BCELoss()
         l1=loss_fn(race_label_hat, race_label)
         l2=loss_fn(gender_label_hat, gender_label)
