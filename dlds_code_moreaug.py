@@ -401,7 +401,7 @@ def cutMix(data_orig, labels, shuffled_data, shuffled_labels, dist):
     mixed[:, :, bbx1:bbx2, bby1:bby2] = shuffled_data[:, :, bbx1:bbx2, bby1:bby2]
     # adjust lambda to exactly match pixel ratio
     lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (data_orig.size()[-1] * data_orig.size()[-2]))
-    y_l = torch.full(labels.size(), lam).to(device=device)
+    y_l = torch.full(labels[0].size(), lam).to(device=device)
     if (type(labels[0]) is tuple):
         race_label, gender_label = labels[:,0], labels[:,1]
         race_label_shuff, gender_label_shuff = shuffled_labels[:,0], shuffled_labels[:,1]
@@ -437,7 +437,7 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
     #print(l)
     l=0.5
     x_l = torch.full(data.size(),l).to(device=device)
-    y_l = torch.full(labels.size(),l).to(device=device)
+    y_l = torch.full(labels[0].size(),l).to(device=device)
     # Perform mixup on both images and labels by combining a pair of images/labels
     # (one from each dataset) into one image/label
     images = data * x_l + shuffled_data * (1 - x_l)
