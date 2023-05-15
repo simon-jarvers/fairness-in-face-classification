@@ -57,10 +57,12 @@ class FaceDataset(Dataset):
         #one-hot-encoding
         #label=torch.tensor(int(self.img_labels.iloc[idx, 2]=='Female'))
         #label=torch.nn.functional.one_hot(label,num_classes=2)
-        if self.output_category == "gender":
+        if self.output_category == "gender" or self.output_category == "combined":
             label = torch.tensor(int(self.img_labels.iloc[idx, 2] == 'Female'))
-            label = torch.nn.functional.one_hot(label, num_classes=2)
-        elif self.output_category == "race":
+            gender_label = torch.nn.functional.one_hot(label, num_classes=2)
+            #print("label gender")
+            #print(gender_label)
+        if self.output_category == "race" or self.output_category == "combined":
             ethnicity = self.img_labels.iloc[idx, 3]
             label = 0
             if ethnicity == 'Black':
@@ -80,10 +82,20 @@ class FaceDataset(Dataset):
             else:
                 print("Problem: ethnicity label not known for index " + str(idx))
             label = torch.tensor(label)
-            label = torch.nn.functional.one_hot(label, num_classes=7)
+            ethnicity_label = torch.nn.functional.one_hot(label, num_classes=7)
+            #print("label ethnicity")
+            #print(ethnicity_label)
+        if(self.output_category == "gender"):
+            label=gender_label.float().to(device=device, non_blocking=True)
+        elif(self.output_category == "race"):
+            label = ethnicity_label.float().to(device=device, non_blocking=True)
+        elif (self.output_category == "combined"):
+            label = (ethnicity_label.float().to(device=device, non_blocking=True), gender_label.float().to(device=device, non_blocking=True))
+            #print("label combined")
+            #print(label)
         else:
             print("no valid output_category")
-        label=label.float().to(device=device, non_blocking=True)
+        #label=label.float().to(device=device, non_blocking=True)
         if self.transform:
             image = self.transform(image)
         if self.target_transform:
@@ -106,26 +118,78 @@ def set_bn_estimate_to_eval(module):
         module.eval()
         #print(module.training)
 
-def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_estimate=True):
-    #load resnet. depth 18, 34, 50, 101, 152
-    model = torchvision.models.resnet18(pretrained=True)
-    #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
-    #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
-    #adapt the last layer to number of classes
-    model.fc = torch.nn.Sequential(torch.nn.Linear(in_features=512, out_features=num_classes, bias=True), torch.nn.Softmax(dim=1))
-    #specify which layers to train
-    if layers_to_train!=[]:
-        for param in model.parameters():
-            param.requires_grad = False
-        for l in layers_to_train:
-            #print(getattr(model, l))
-            for param in getattr(model, l).parameters():
-                param.requires_grad = True
-    if not train_bn_params:
-        model.apply(freeze_bn_module_params)
-    if not update_bn_estimate:
-        model.apply(set_bn_estimate_to_eval)
-    return model.to(device)
+# def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_estimate=True):
+#     #load resnet. depth 18, 34, 50, 101, 152
+#     model = torchvision.models.resnet18(pretrained=True)
+#     #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
+#     #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
+#     #adapt the last layer to number of classes
+#     model.fc = torch.nn.Sequential(torch.nn.Linear(in_features=512, out_features=num_classes, bias=True), torch.nn.Softmax(dim=1))
+#     #specify which layers to train
+#     if layers_to_train!=[]:
+#         for param in model.parameters():
+#             param.requires_grad = False
+#         for l in layers_to_train:
+#             #print(getattr(model, l))
+#             for param in getattr(model, l).parameters():
+#                 param.requires_grad = True
+#     if not train_bn_params:
+#         model.apply(freeze_bn_module_params)
+#     if not update_bn_estimate:
+#         model.apply(set_bn_estimate_to_eval)
+#     return model.to(device)
+
+class FaceResNet(nn.Module):
+  def __init__(self, output_category, layers_to_train=[], train_bn_params=True, update_bn_estimate=True, depth=18):
+        super().__init__()
+        #load pretrained model
+        if depth==18:
+            self.net = torchvision.models.resnet18(pretrained=True)
+        elif depth==34:
+            self.net = torchvision.models.resnet34(pretrained=True)
+        elif depth==50:
+            self.net = torchvision.models.resnet50(pretrained=True)
+        else:
+            print('depth choice not valid')
+        num_features=self.net.fc.in_features
+        print(num_features)
+        if(output_category=='combined'):
+            #build the two prediction heads for multi task learning
+            self.net.fc = nn.Identity()
+            self.net.fc_race = torch.nn.Sequential(torch.nn.Linear(in_features=num_features, out_features=7, bias=True), torch.nn.Softmax(dim=1))
+            self.net.fc_gender = torch.nn.Sequential(torch.nn.Linear(in_features=num_features, out_features=2, bias=True), torch.nn.Softmax(dim=1))
+        elif(output_category=='race'):
+            self.net.fc =torch.nn.Sequential(torch.nn.Linear(in_features=num_features, out_features=7, bias=True), torch.nn.Softmax(dim=1))
+        elif(output_category=='gender'):
+            self.net.fc =torch.nn.Sequential(torch.nn.Linear(in_features=num_features, out_features=2, bias=True), torch.nn.Softmax(dim=1))
+        else:
+            print("no valid output category")
+
+        #specify which layers to train
+        if layers_to_train!=[]:
+            for param in self.net.parameters():
+                param.requires_grad = False
+            for l in layers_to_train:
+                for param in getattr(self.net, l).parameters():
+                    param.requires_grad = True
+                if output_category=='combined':
+                    for param in self.net.fc_gender.parameters():
+                        param.requires_grad = True
+                    for param in self.net.fc_race.parameters():
+                        param.requires_grad = True
+        if not train_bn_params:
+            self.net.apply(freeze_bn_module_params)
+        if not update_bn_estimate:
+            self.net.apply(set_bn_estimate_to_eval)
+        print(self)
+
+  def forward(self, x):
+      if(output_category=='combined'):
+          gender_head = self.net.fc_gender(self.net(x))
+          ethnicity_head = self.net.fc_race(self.net(x))
+          return (ethnicity_head, gender_head)
+      else:
+          return self.net(x)
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial=None):
     #if do_tuning:
@@ -149,14 +213,25 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         model.train()
         for (x, y) in train_dataloader:#was pbar
             optimizer.zero_grad()  # zero out gradients
-            x_aug=x.clone()
-            y_aug=y.clone()
+            if(output_category=='combined'):
+                x_aug = x.clone()
+                y_race_aug, y_gender_aug = (y[0].clone(),y[1].clone())
+                y_aug=(y_race_aug, y_gender_aug)
+            else:
+                x_aug=x.clone()
+                y_aug=y.clone()
             if(use_data_augmentation):
                 x_aug=data_augmentation(x_aug,p_augment)
             if(use_mix_up or use_cut_mix):
                 indices = torch.randperm(x.size(0))
                 shuffled_x = x[indices]
-                shuffled_y = y[indices]
+                if (output_category == 'combined'):
+                    y_race, y_gender = (y[0], y[1])
+                    shuffled_y_race = y_race[indices]
+                    shuffled_y_gender = y_gender[indices]
+                    shuffled_y=(shuffled_y_race,shuffled_y_gender)
+                else:
+                    shuffled_y=y[indices]
                 alpha = 0.2
                 dist = torch.distributions.beta.Beta(alpha, alpha)
                 if (np.random.normal() < p_augment and use_cut_mix):
@@ -172,7 +247,9 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             # log partial metrics
             metrics['loss'].append(loss.item())
             for k, fn in metric_fns.items():
-                metrics[k].append(fn(y_hat, y).item())
+                # metrics[k].append(fn(y_hat, y).item())
+                metrics[k].append(fn(y_hat, y).item() if type(fn(y_hat, y)) is not tuple else
+                                  tuple([el.item() for el in fn(y_hat, y)]))
 
         # validation
         #if do_tuning:
@@ -185,7 +262,9 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 # log partial metrics
                 metrics['val_loss'].append(loss.item())
                 for k, fn in metric_fns.items():
-                    metrics['val_'+k].append(fn(y_hat, y).item())
+                    #metrics['val_'+k].append(fn(y_hat, y).item())
+                    metrics['val_' + k].append(fn(y_hat, y).item() if type(fn(y_hat, y)) is not tuple else
+                                               tuple([el.item() for el in fn(y_hat, y)]))
                 #if do_tuning:
                     loss_sum += metrics['val_loss'][-1]/len(eval_dataloader)
             if do_tuning:
@@ -195,17 +274,27 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                     raise optuna.exceptions.TrialPruned()
 
         # summarize metrics, log to tensorboard and display
-        history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
-        for k, v in history[epoch].items():
-          writer.add_scalar(k, v, epoch)
+        if type(metrics['acc'][0]) is not tuple:
+            history[epoch] = {k: sum(v) / len(v) for k, v in metrics.items()}
+        else:
+            history[epoch] = {'loss': sum(metrics['loss'])/len(metrics['loss']),
+                              'val_loss': sum(metrics['val_loss'])/len(metrics['val_loss']),
+                              'acc':(sum(i for i, _, _ in metrics['acc'])/len(metrics['acc']),
+                                     sum(i for _, i, _ in metrics['acc'])/len(metrics['acc']),
+                                     sum(i for _, _, i in metrics['acc'])/len(metrics['acc'])),
+                              'val_acc':(sum(i for i, _, _ in metrics['val_acc'])/len(metrics['val_acc']),
+                                         sum(i for _, i, _ in metrics['val_acc'])/len(metrics['val_acc']),
+                                         sum(i for _, _, i in metrics['val_acc'])/len(metrics['val_acc']))
+                          }
+        #for k, v in history[epoch].items():
+        #  writer.add_scalar(k, v, epoch)
         print(' '.join(['\t- '+str(k)+' = '+str(v)+'\n ' for (k, v) in history[epoch].items()]))
 
     print('Finished Training')
     val_loss = history[n_epochs-1]['val_loss']
     if (not do_tuning) or val_loss < lowest_val_loss:
-        if do_tuning:
-            lowest_val_loss = val_loss
-        # plot loss curves
+        lowest_val_loss = val_loss
+        # plot loss curve
         fig, ax = plt.subplots(1)
         ax.plot([v['loss'] for k, v in history.items()], label='Training Loss')
         ax.plot([v['val_loss'] for k, v in history.items()], label='Validation Loss')
@@ -220,18 +309,56 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         fig.savefig(graphname)
         #plot other metrics
         for metricname, _ in metric_fns.items():
-            fig2, ax2 = plt.subplots(1)
-            ax2.plot([v[metricname] for k, v in history.items()], label=('Training ' + metricname))
-            ax2.plot([v['val_' + metricname] for k, v in history.items()], label=('Validation ' + metricname))
-            ax2.set_ylabel(metricname)
-            ax2.set_xlabel('Epochs')
-            ax2.set_title(str(metricname + " for config file= " + str(configfilename)))
-            ax2.legend()
-            # fig2.show()
-            graphname = metricname + "_graph_" + str(configfilename) + "_" + ct + ".png"
-            print("Saved " + metricname + " graph with filename: " + graphname)
-            fig2.savefig(graphname)
-
+            if type(history[0][metricname]) is not tuple:
+                fig2, ax2 = plt.subplots(1)
+                ax2.plot([v[metricname] for k, v in history.items()], label=('Training ' + metricname))
+                ax2.plot([v['val_' + metricname] for k, v in history.items()], label=('Validation ' + metricname))
+                ax2.set_ylabel(metricname)
+                ax2.set_xlabel('Epochs')
+                ax2.set_title(str(metricname + " for config file= " + str(configfilename)))
+                ax2.legend()
+                # fig2.show()
+                graphname = metricname + "_graph_" + str(configfilename) + "_" + ct + ".png"
+                print("Saved " + metricname + " graph with filename: " + graphname)
+                fig2.savefig(graphname)
+            else:
+                #race
+                fig2, ax2 = plt.subplots(1)
+                ax2.plot([v[metricname][0] for k, v in history.items()], label=('Training ' + metricname + ' for race'))
+                ax2.plot([v['val_' + metricname][0] for k, v in history.items()], label=('Validation ' + metricname+ ' for race'))
+                ax2.set_ylabel(metricname)
+                ax2.set_xlabel('Epochs')
+                ax2.set_title(str(metricname + " for race for config file= " + str(configfilename)))
+                ax2.legend()
+                # fig2.show()
+                graphname = metricname + "_race_graph_" + str(configfilename) + "_" + ct + ".png"
+                print("Saved " + metricname + " graph with filename: " + graphname)
+                fig2.savefig(graphname)
+                #gender
+                fig2, ax2 = plt.subplots(1)
+                ax2.plot([v[metricname][1] for k, v in history.items()], label=('Training ' + metricname + ' for gender'))
+                ax2.plot([v['val_' + metricname][1] for k, v in history.items()], label=('Validation ' + metricname+ 'for gender'))
+                ax2.set_ylabel(metricname)
+                ax2.set_xlabel('Epochs')
+                ax2.set_title(str(metricname + " for gender for config file= " + str(configfilename)))
+                ax2.legend()
+                # fig2.show()
+                graphname = metricname + "_gender_graph_" + str(configfilename) + "_" + ct + ".png"
+                print("Saved " + metricname + " graph with filename: " + graphname)
+                fig2.savefig(graphname)
+                fig2.savefig(graphname)
+                #combined
+                fig2, ax2 = plt.subplots(1)
+                ax2.plot([v[metricname][2] for k, v in history.items()], label=('Training ' + metricname + ' for combined'))
+                ax2.plot([v['val_' + metricname][2] for k, v in history.items()], label=('Validation ' + metricname+ ' for combined'))
+                ax2.set_ylabel(metricname)
+                ax2.set_xlabel('Epochs')
+                ax2.set_title(str(metricname + " for combined for config file= " + str(configfilename)))
+                ax2.legend()
+                # fig2.show()
+                graphname = metricname + "_combined_graph_" + str(configfilename) + "_" + ct + ".png"
+                print("Saved " + metricname + " graph with filename: " + graphname)
+                fig2.savefig(graphname)
         test_pred = []
         test_truth = []
         model.eval()
@@ -250,10 +377,16 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
 
     return lowest_val_loss
 
-
 def accuracy_fn(y_hat, y):
     # computes classification accuracy
-    return (torch.argmax(y_hat, dim=1) == torch.argmax(y, dim=1)).float().mean()
+    if type(y_hat) is tuple:
+        race_label, gender_label = y[0], y[1]
+        race_label_hat, gender_label_hat = y_hat
+        acc_race = (torch.argmax(race_label_hat, dim=1) == torch.argmax(race_label, dim=1)).float().mean()
+        acc_gender = (torch.argmax(gender_label_hat, dim=1) == torch.argmax(gender_label, dim=1)).float().mean()
+        return (acc_race, acc_gender, (acc_race+acc_gender)/2)
+    else:
+        return (torch.argmax(y_hat, dim=1) == torch.argmax(y, dim=1)).float().mean()
 
 # more data augmentation options at https://pytorch.org/vision/stable/transforms.html
 def data_augmentation(image, prob):
@@ -266,7 +399,7 @@ def data_augmentation(image, prob):
         transforms.RandomApply(
             torch.nn.Sequential(
             transforms.RandomCrop(200),
-            transforms.Resize(256)
+            transforms.Resize(224)
             ),p=0.4
         )
         ), p=prob
@@ -282,8 +415,14 @@ def cutMix(data_orig, labels, shuffled_data, shuffled_labels, dist):
     mixed[:, :, bbx1:bbx2, bby1:bby2] = shuffled_data[:, :, bbx1:bbx2, bby1:bby2]
     # adjust lambda to exactly match pixel ratio
     lam = 1 - ((bbx2 - bbx1) * (bby2 - bby1) / (data_orig.size()[-1] * data_orig.size()[-2]))
-    y_l = torch.full(labels.size(), lam).to(device=device)
-    new_targets = labels * y_l + shuffled_labels * (1 - y_l)
+    if (type(labels) is tuple):
+        race_label, gender_label = labels[0], labels[1]
+        race_label_shuff, gender_label_shuff = shuffled_labels[0], shuffled_labels[1]
+        new_targets_race = race_label * lam + race_label_shuff * (1 - lam)
+        new_targets_gender = gender_label * lam + gender_label_shuff * (1 - lam)
+        new_targets=(new_targets_race,new_targets_gender)
+    else:
+        new_targets = labels * lam + shuffled_labels * (1 - lam)
     return mixed, new_targets
 
 def rand_bbox(size, lam):
@@ -308,15 +447,29 @@ def rand_bbox(size, lam):
 def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
     # Sample lambda and reshape it to do the mixup
     l = dist.sample()
-    print(l)
-    l=0.5
-    x_l = torch.full(data.size(),l).to(device=device)
-    y_l = torch.full(labels.size(),l).to(device=device)
     # Perform mixup on both images and labels by combining a pair of images/labels
     # (one from each dataset) into one image/label
-    images = data * x_l + shuffled_data * (1 - x_l)
-    labels = labels * y_l + shuffled_labels * (1 - y_l)
+    images = data * l + shuffled_data * (1 - l)
+    if (type(labels) is tuple):
+        race_label, gender_label = labels[0], labels[1]
+        race_label_shuff, gender_label_shuff = shuffled_labels[0], shuffled_labels[1]
+        new_targets_race = race_label * l + race_label_shuff * (1 - l)
+        new_targets_gender = gender_label * l + gender_label_shuff * (1 - l)
+        labels=(new_targets_race,new_targets_gender)
+    else:
+        labels = labels * l + shuffled_labels * (1 - l)
     return (images, labels)
+
+def bce_loss(yhat, y):
+    loss_fn = nn.BCELoss()
+    if(type(yhat) is tuple):
+        race_label,gender_label=y[0],y[1]
+        race_label_hat,gender_label_hat=yhat
+        l1=loss_fn(race_label_hat, race_label)
+        l2=loss_fn(gender_label_hat, gender_label)
+        return (l1+l2)/2
+    else:
+        return loss_fn(yhat, y)
 
  # Define a set of hyperparameter values, build the model, train the model, and evaluate the accuracy
 def objective(trial):
@@ -340,9 +493,10 @@ def objective(trial):
     print(params)
     train_dataloader = DataLoader(training_data, batch_size=params['batch_size'], shuffle=True)
     print("Train datasets loaded")
-    model=load_model(num_classes, layers_to_train, params["train_bn_params"], params["update_bn_estimate"])
+    #model=load_model(num_classes, layers_to_train, params["train_bn_params"], params["update_bn_estimate"])
+    model = FaceResNet(output_category, layers_to_train, params["train_bn_params"], params["update_bn_estimate"], depth).to(device=device)
     print("Model loaded")
-    loss_fn = nn.BCELoss()
+    loss_fn = bce_loss
     metric_fns = {'acc': accuracy_fn}
     optimizer = torch.optim.Adam(model.parameters(), lr=params["start_learningrate"])
     start = time.time()
@@ -351,7 +505,6 @@ def objective(trial):
     print("Time in minutes for training "+str(params["n_epochs"])+" epochs:")
     print((end - start)/60)
     return score
-
 
 if __name__ == "__main__":
     device = (
@@ -395,11 +548,14 @@ if __name__ == "__main__":
     p_augment = config_dict.get("p_augment", 0.5)
     n_optuna_trials = config_dict.get("n_optuna_trials", 1)
     do_tuning = config_dict.get("do_tuning", False)
+    depth = config_dict.get("depth", 18)
 
     if output_category == 'gender':
         num_classes = 2
     elif output_category == "race":
         num_classes=7
+    elif output_category == "combined":
+        num_classes = [7,2]
     else:
         print("Invalid output_category")
 
@@ -421,8 +577,8 @@ if __name__ == "__main__":
         test_data = FaceDataset(data_path + "/test.csv", data_path,output_category=output_category, balanced=use_balanced_dataset)
     val_dataloader = DataLoader(val_data, batch_size=128, shuffle=False)
     test_dataloader = DataLoader(test_data, batch_size=128, shuffle=False)
+    lowest_val_loss = 1
     if do_tuning:
-        lowest_val_loss = 1
         study = optuna.create_study(direction="minimize", sampler=optuna.samplers.TPESampler(),
                                     pruner=optuna.pruners.MedianPruner())
         study.optimize(objective, n_trials=n_optuna_trials)  # -> function given by objective
@@ -432,9 +588,10 @@ if __name__ == "__main__":
     else:
         train_dataloader = DataLoader(training_data, batch_size=batch_size, shuffle=True)
         print("Datasets loaded")
-        model = load_model(num_classes, layers_to_train, train_bn_params, update_bn_estimate)
+        #model = load_model(num_classes, layers_to_train, train_bn_params, update_bn_estimate)
+        model = FaceResNet(output_category, layers_to_train, train_bn_params, update_bn_estimate, depth).to(device=device)
         print("Model loaded")
-        loss_fn = nn.BCELoss()
+        loss_fn = bce_loss
         metric_fns = {'acc': accuracy_fn}
         optimizer = torch.optim.Adam(model.parameters(), lr=start_learningrate)
         start = time.time()
@@ -442,5 +599,3 @@ if __name__ == "__main__":
         end = time.time()
         print("Time in minutes for training " + str(n_epochs) + " epochs:")
         print((end - start) / 60)
-
-
