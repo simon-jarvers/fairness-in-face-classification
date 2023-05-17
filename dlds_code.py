@@ -461,14 +461,19 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
     return (images, labels)
 
 def bce_loss(yhat, y):
-    loss_fn = nn.BCELoss()
     if(type(yhat) is tuple):
         race_label,gender_label=y[0],y[1]
         race_label_hat,gender_label_hat=yhat
+        batch_weights=np.ones(shape=y.size(0))
+        for i in range(y.size(0)):
+            batch_weights[i]=loss_penalty_weights[2*np.argmax(race_label[i])+np.argmax(gender_label[i])]
+        batch_weights_tensor= torch.tensor(batch_weights)
+        loss_fn = nn.BCELoss(weight=batch_weights_tensor)
         l1=loss_fn(race_label_hat, race_label)
         l2=loss_fn(gender_label_hat, gender_label)
         return (l1+l2)/2
     else:
+        loss_fn = nn.BCELoss()
         return loss_fn(yhat, y)
 
  # Define a set of hyperparameter values, build the model, train the model, and evaluate the accuracy
@@ -558,6 +563,9 @@ if __name__ == "__main__":
         num_classes = [7,2]
     else:
         print("Invalid output_category")
+
+    loss_penalty_weights=[1 for i in range(14)]
+    loss_penalty_weights[5]=1
 
     if use_short_data_version:
         labelfileprev = "short_version_"
