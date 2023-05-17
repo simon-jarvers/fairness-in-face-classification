@@ -152,7 +152,7 @@ class FaceResNet(nn.Module):
         else:
             print('depth choice not valid')
         num_features=self.net.fc.in_features
-        print(num_features)
+        #print(num_features)
         if(output_category=='combined'):
             #build the two prediction heads for multi task learning
             self.net.fc = nn.Identity()
@@ -181,7 +181,7 @@ class FaceResNet(nn.Module):
             self.net.apply(freeze_bn_module_params)
         if not update_bn_estimate:
             self.net.apply(set_bn_estimate_to_eval)
-        print(self)
+        #print(self)
 
   def forward(self, x):
       if(output_category=='combined'):
@@ -369,11 +369,11 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         # save predictions TODO file name
         filename = str(configfilename) + "_" + ct
         pred_file = open("predictions_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
-        truth_file = open("groundtruth_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
+        #truth_file = open("groundtruth_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
         pkl.dump(test_pred, pred_file)
-        pkl.dump(test_truth, truth_file)
+        #pkl.dump(test_truth, truth_file)
         pred_file.close()
-        truth_file.close()
+        #truth_file.close()
 
     return lowest_val_loss
 
