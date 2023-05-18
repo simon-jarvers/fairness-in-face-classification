@@ -51,13 +51,13 @@ def split_dataset(face_dataset: FaceDataset, train_split: float):
     df_val.to_csv('./val.csv', index=False)
 
 
-def save_test_set(face_dataset: FaceDataset, service_test = True):
+def split_based_on_service_test(face_dataset: FaceDataset, service_test = True, fn='test'):
     df: pd.DataFrame = face_dataset.img_labels
 
     df_grouped = df.groupby(['service_test'])
 
-    for name, group in df_grouped:
-        group.to_csv(f'./test_{name}.csv', index=False)
+    for service_test_bool, group in df_grouped:
+        group.to_csv(f'./{fn}_{service_test_bool}.csv', index=False)
 
 
 def dataset_balance(face_dataset: FaceDataset):
@@ -107,7 +107,7 @@ if __name__ == '__main__':
     test_data = FaceDataset('./fairface_label_val.csv', '.')
     dataset_balance(test_data)
 
-    # save_test_set(test_data)
+    # split_based_on_service_test(val_data, fn='val')
 
     # train_dataloader = DataLoader(training_data, batch_size=64, shuffle=False)
     #
