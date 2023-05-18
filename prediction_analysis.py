@@ -204,7 +204,7 @@ def encode_labels_to_one_hot(labels_from_csv: pd.DataFrame):
     labels_true_race_one_hot = pd.get_dummies(race_idx)
     labels_true_one_hot = pd.concat([labels_true_gender_one_hot, labels_true_race_one_hot], axis=1).to_numpy()
 
-    np.save('test_gender_race_one_hot', labels_true_one_hot)
+    np.save('val_True_gender_race_one_hot', labels_true_one_hot)
 
 
 def get_sample_data(n_samples=1000, n_genders=2, n_races=7):
@@ -219,7 +219,7 @@ def get_sample_data(n_samples=1000, n_genders=2, n_races=7):
 
 if __name__ == "__main__":
     for fn in tqdm(os.listdir('predictions')):
-        if fn.startswith('predictions'):
+        if fn.startswith('predictions') or fn.startswith('val_predictions'):
             pass
         else:
             continue
@@ -231,14 +231,18 @@ if __name__ == "__main__":
 
         labels_pred = torch.concat(labels_pred).cpu().data.numpy()
 
-        # annotations_file = 'test.csv'
-        # labels_from_csv = pd.read_csv(annotations_file)
-        # labels_true = encode_labels_to_one_hot(labels_from_csv)
+        annotations_file = 'val_True.csv'
+        labels_from_csv = pd.read_csv(annotations_file)
+        labels_true = encode_labels_to_one_hot(labels_from_csv)
 
         if labels_pred.shape[0] == 5162:
             labels_true = np.load('test_True_gender_race_one_hot.npy')
         elif labels_pred.shape[0] == 10954:
             labels_true = np.load('test_gender_race_one_hot.npy')
+        elif labels_pred.shape[0] == 5031:
+            labels_true = np.load('val_True_gender_race_one_hot.npy')
+        elif labels_pred.shape[0] == 10841:
+            labels_true = np.load('val_gender_race_one_hot.npy')
         else:
             continue
 
@@ -250,7 +254,7 @@ if __name__ == "__main__":
         fn = os.path.splitext(fn)[0]
         # pred_vis.plot_gender_acc(normalize=True)
         pred_vis.plot_gender_acc(normalize=True, fn=fn)
-        # pred_vis.plot_gender_acc(normalize=False, fn=fn)
-        #
-        # pred_vis.plot_histogram(fn=fn)
+        pred_vis.plot_gender_acc(normalize=False, fn=fn)
+
+        pred_vis.plot_histogram(fn=fn)
 
