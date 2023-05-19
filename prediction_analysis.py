@@ -139,7 +139,7 @@ class PredictionVisualization:
                 df.plot.barh(ax=ax, stacked=True, color=['limegreen', 'gold', 'orangered'])
                 mean = [df.values[:, :2].sum(axis=1).mean().round(1), df.values[:, :1].sum(axis=1).mean().round(1)]
                 std = [df.values[:, :2].sum(axis=1).std().round(1), df.values[:, :1].sum(axis=1).std().round(1)]
-                hbars = ax.barh([-1, -2], mean, height=.6, xerr=std)
+                hbars = ax.barh([-1, -2], mean, height=.6, xerr=std, color='deepskyblue')
                 ax.bar_label(hbars, labels=[f'±{std}' for std in std])
                 ax.set_yticks(np.arange(-2, len(self.class_names)), labels=['Gender and Race', name, *self.class_names])
                 for container in ax.containers:
@@ -231,20 +231,20 @@ if __name__ == "__main__":
 
         labels_pred = torch.concat(labels_pred).cpu().data.numpy()
 
-        annotations_file = 'val_True.csv'
-        labels_from_csv = pd.read_csv(annotations_file)
-        labels_true = encode_labels_to_one_hot(labels_from_csv)
+        # annotations_file = 'val_True.csv'
+        # labels_from_csv = pd.read_csv(annotations_file)
+        # labels_true = encode_labels_to_one_hot(labels_from_csv)
 
         if labels_pred.shape[0] == 5162:
-            labels_true = np.load('test_True_gender_race_one_hot.npy')
+            labels_true = np.load('groundtruth/test_True_gender_race_one_hot.npy')
         elif labels_pred.shape[0] == 10954:
-            labels_true = np.load('test_gender_race_one_hot.npy')
+            labels_true = np.load('groundtruth/test_gender_race_one_hot.npy')
         elif labels_pred.shape[0] == 5031:
-            labels_true = np.load('val_True_gender_race_one_hot.npy')
+            labels_true = np.load('groundtruth/val_True_gender_race_one_hot.npy')
         elif labels_pred.shape[0] == 10841:
-            labels_true = np.load('val_gender_race_one_hot.npy')
+            labels_true = np.load('groundtruth/val_gender_race_one_hot.npy')
         else:
-            continue
+            raise ValueError(f'Size of Prediction {labels_pred.shape[0]} unknown')
 
         # create sample data
         # labels_pred, labels_true = get_sample_data()
@@ -255,6 +255,5 @@ if __name__ == "__main__":
         # pred_vis.plot_gender_acc(normalize=True)
         pred_vis.plot_gender_acc(normalize=True, fn=fn)
         pred_vis.plot_gender_acc(normalize=False, fn=fn)
-
         pred_vis.plot_histogram(fn=fn)
 
