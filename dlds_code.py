@@ -359,9 +359,23 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 graphname = metricname + "_combined_graph_" + str(configfilename) + "_" + ct + ".png"
                 print("Saved " + metricname + " graph with filename: " + graphname)
                 fig2.savefig(graphname)
+        model.eval()
+        val_pred = []
+        val_truth = []
+        with torch.no_grad():  # do not keep track of gradients
+            for (x, y) in eval_dataloader:
+                val_pred.append(model(x))  # forward pass
+                val_truth.append(y)
+        # save predictions
+        filename = str(configfilename) + "_" + ct
+        pred_file = open("val_predictions_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
+        truth_file = open("val_groundtruth_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
+        pkl.dump(val_pred, pred_file)
+        pkl.dump(val_truth, truth_file)
+        pred_file.close()
+        truth_file.close()
         test_pred = []
         test_truth = []
-        model.eval()
         with torch.no_grad():  # do not keep track of gradients
             for (x, y) in test_dataloader:
                 test_pred.append(model(x))  # forward pass
@@ -463,18 +477,57 @@ def mixUp(data, labels, shuffled_data, shuffled_labels, dist):
 def bce_loss(yhat, y):
     if(type(yhat) is tuple):
         race_label,gender_label=y[0],y[1]
-        race_label_hat,gender_label_hat=yhat
-        batch_weights=np.ones(shape=y.size(0))
-        for i in range(y.size(0)):
-            batch_weights[i]=loss_penalty_weights[2*np.argmax(race_label[i])+np.argmax(gender_label[i])]
-        batch_weights_tensor= torch.tensor(batch_weights)
-        loss_fn = nn.BCELoss(weight=batch_weights_tensor)
-        l1=loss_fn(race_label_hat, race_label)
-        l2=loss_fn(gender_label_hat, gender_label)
+        race_label_hat,gender_label_hat=yhat[0],yhat[1]
+        #print(race_label)
+        #print(race_label_hat)
+        #print(gender_label)
+        #print(gender_label_hat)
+        #print("size")
+        #print(y[0].size(0))
+        batch_weights=np.ones(shape=y[0].size(0))
+        for i in range(y[0].size(0)):
+            batch_weights[i]=loss_penalty_weights[2*np.argmax(race_label[i].cpu())+np.argmax(gender_label[i].cpu())]
+        batch_weights_tensor= torch.tensor(batch_weights).to(device=device, non_blocking=True)
+        loss_fn = nn.BCELoss(reduction='none')#weight=batch_weights_tensor)
+        l1=torch.mean(loss_fn(race_label_hat, race_label), 1)
+        l2=torch.mean(loss_fn(gender_label_hat, gender_label), 1)
+        l1 = torch.mean(l1*batch_weights_tensor)
+        l2 = torch.mean(l2*batch_weights_tensor)
         return (l1+l2)/2
     else:
         loss_fn = nn.BCELoss()
         return loss_fn(yhat, y)
+
+def focal_loss(yhat, y):
+    BCE = bce_loss(yhat, y)
+    BCE_exp = torch.exp(-BCE)
+    return focal_alpha*(1-BCE_exp)**focal_gamma*BCE
+
+def regularized_BCE(yhat, y):
+    race_label, gender_label = y[0], y[1]
+    race_label_hat, gender_label_hat = yhat[0], yhat[1]
+    loss_fn = nn.BCELoss(reduction='none')  # weight=batch_weights_tensor)
+    l1 = torch.mean(loss_fn(race_label_hat, race_label), 1)
+    l2 = torch.mean(loss_fn(gender_label_hat, gender_label), 1)
+
+    class_losses = np.zeros(14)
+    for i in range(y[0].size(0)):
+        curr_class = 2 * np.argmax(race_label[i].cpu()) + np.argmax(gender_label[i].cpu())
+        class_losses[curr_class] += l1[i].cpu()+l2[i].cpu()
+
+    non_zero_class_losses = class_losses[class_losses!=0]
+    var = np.var(non_zero_class_losses)
+
+    l1 = torch.mean(l1 * batch_weights_tensor)
+    l2 = torch.mean(l2 * batch_weights_tensor)
+    l = (l1 + l2) / 2
+    print("loss")
+    print(l)
+    print("var")
+    print(var)
+    return l + lmbd*var
+
+
 
  # Define a set of hyperparameter values, build the model, train the model, and evaluate the accuracy
 def objective(trial):
@@ -554,6 +607,12 @@ if __name__ == "__main__":
     n_optuna_trials = config_dict.get("n_optuna_trials", 1)
     do_tuning = config_dict.get("do_tuning", False)
     depth = config_dict.get("depth", 18)
+    loss_penalty_weights = config_dict.get("loss_penalty_weights", [1 for i in range(14)])
+    loss_name = config_dict.get("loss_name", "bce")
+    lmbd = config_dict.get(lmbd, 1)
+
+    focal_alpha = 0.8
+    focal_gamma = 2
 
     if output_category == 'gender':
         num_classes = 2
@@ -563,9 +622,6 @@ if __name__ == "__main__":
         num_classes = [7,2]
     else:
         print("Invalid output_category")
-
-    loss_penalty_weights=[1 for i in range(14)]
-    loss_penalty_weights[5]=1
 
     if use_short_data_version:
         labelfileprev = "short_version_"
@@ -599,7 +655,14 @@ if __name__ == "__main__":
         #model = load_model(num_classes, layers_to_train, train_bn_params, update_bn_estimate)
         model = FaceResNet(output_category, layers_to_train, train_bn_params, update_bn_estimate, depth).to(device=device)
         print("Model loaded")
-        loss_fn = bce_loss
+        if loss_name=="bce":
+            loss_fn = bce_loss
+        elif loss_name=="focal":
+            loss_fn = focal_loss
+        elif loss_name=="regularized_BCE":
+            loss_fn = regularized_BCE
+        else:
+            print("no valid loss")
         metric_fns = {'acc': accuracy_fn}
         optimizer = torch.optim.Adam(model.parameters(), lr=start_learningrate)
         start = time.time()
