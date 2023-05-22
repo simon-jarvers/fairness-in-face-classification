@@ -51,17 +51,11 @@ class FaceDataset(Dataset):
         return len(self.img_labels)
 
     def __getitem__(self, idx):
-        #print(idx)
         img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx, 0])
         image = (read_image(img_path)/255).to(device=device, non_blocking=True)
-        #one-hot-encoding
-        #label=torch.tensor(int(self.img_labels.iloc[idx, 2]=='Female'))
-        #label=torch.nn.functional.one_hot(label,num_classes=2)
         if self.output_category == "gender" or self.output_category == "combined":
             label = torch.tensor(int(self.img_labels.iloc[idx, 2] == 'Female'))
             gender_label = torch.nn.functional.one_hot(label, num_classes=2)
-            #print("label gender")
-            #print(gender_label)
         if self.output_category == "race" or self.output_category == "combined":
             ethnicity = self.img_labels.iloc[idx, 3]
             label = 0
@@ -83,19 +77,14 @@ class FaceDataset(Dataset):
                 print("Problem: ethnicity label not known for index " + str(idx))
             label = torch.tensor(label)
             ethnicity_label = torch.nn.functional.one_hot(label, num_classes=7)
-            #print("label ethnicity")
-            #print(ethnicity_label)
         if(self.output_category == "gender"):
             label=gender_label.float().to(device=device, non_blocking=True)
         elif(self.output_category == "race"):
             label = ethnicity_label.float().to(device=device, non_blocking=True)
         elif (self.output_category == "combined"):
             label = (ethnicity_label.float().to(device=device, non_blocking=True), gender_label.float().to(device=device, non_blocking=True))
-            #print("label combined")
-            #print(label)
         else:
             print("no valid output_category")
-        #label=label.float().to(device=device, non_blocking=True)
         if self.transform:
             image = self.transform(image)
         if self.target_transform:
@@ -104,40 +93,12 @@ class FaceDataset(Dataset):
 
 def freeze_bn_module_params(module):
     if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-        #print("freeze_bn_params")
-        #print(module)
         for param in module.parameters():
-            #print(param.requires_grad)
             param.requires_grad = False
-            #print(param.requires_grad)
 
 def set_bn_estimate_to_eval(module):
     if isinstance(module, torch.nn.modules.batchnorm._BatchNorm):
-        #print("bn_eval")
-        #print(module.training)
         module.eval()
-        #print(module.training)
-
-# def load_model(num_classes, layers_to_train=[], train_bn_params=True, update_bn_estimate=True):
-#     #load resnet. depth 18, 34, 50, 101, 152
-#     model = torchvision.models.resnet18(pretrained=True)
-#     #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', pretrained=True)
-#     #model = torch.hub.load('pytorch/vision:v0.10.0', 'resnet18', weights=torchvision.models.ResNet18_Weights.IMAGENET1K_V1)
-#     #adapt the last layer to number of classes
-#     model.fc = torch.nn.Sequential(torch.nn.Linear(in_features=512, out_features=num_classes, bias=True), torch.nn.Softmax(dim=1))
-#     #specify which layers to train
-#     if layers_to_train!=[]:
-#         for param in model.parameters():
-#             param.requires_grad = False
-#         for l in layers_to_train:
-#             #print(getattr(model, l))
-#             for param in getattr(model, l).parameters():
-#                 param.requires_grad = True
-#     if not train_bn_params:
-#         model.apply(freeze_bn_module_params)
-#     if not update_bn_estimate:
-#         model.apply(set_bn_estimate_to_eval)
-#     return model.to(device)
 
 class FaceResNet(nn.Module):
   def __init__(self, output_category, layers_to_train=[], train_bn_params=True, update_bn_estimate=True, depth=18):
@@ -152,7 +113,6 @@ class FaceResNet(nn.Module):
         else:
             print('depth choice not valid')
         num_features=self.net.fc.in_features
-        #print(num_features)
         if(output_category=='combined'):
             #build the two prediction heads for multi task learning
             self.net.fc = nn.Identity()
@@ -181,7 +141,6 @@ class FaceResNet(nn.Module):
             self.net.apply(freeze_bn_module_params)
         if not update_bn_estimate:
             self.net.apply(set_bn_estimate_to_eval)
-        #print(self)
 
   def forward(self, x):
       if(output_category=='combined'):
@@ -192,7 +151,6 @@ class FaceResNet(nn.Module):
           return self.net(x)
 
 def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimizer, n_epochs, trial=None):
-    #if do_tuning:
     global lowest_val_loss
     # training loop
     logdir = './tensorboard/net'
@@ -211,7 +169,7 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
 
         # training
         model.train()
-        for (x, y) in train_dataloader:#was pbar
+        for (x, y) in train_dataloader:
             optimizer.zero_grad()  # zero out gradients
             if(output_category=='combined'):
                 x_aug = x.clone()
@@ -243,16 +201,13 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             loss = loss_fn(y_hat, y_aug)
             loss.backward()  # backward pass
             optimizer.step()  # optimize weights
-            #print("step")
             # log partial metrics
             metrics['loss'].append(loss.item())
             for k, fn in metric_fns.items():
-                # metrics[k].append(fn(y_hat, y).item())
                 metrics[k].append(fn(y_hat, y).item() if type(fn(y_hat, y)) is not tuple else
                                   tuple([el.item() for el in fn(y_hat, y)]))
 
         # validation
-        #if do_tuning:
         loss_sum = 0 #for pruning
         model.eval()
         with torch.no_grad():  # do not keep track of gradients
@@ -262,10 +217,8 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                 # log partial metrics
                 metrics['val_loss'].append(loss.item())
                 for k, fn in metric_fns.items():
-                    #metrics['val_'+k].append(fn(y_hat, y).item())
                     metrics['val_' + k].append(fn(y_hat, y).item() if type(fn(y_hat, y)) is not tuple else
                                                tuple([el.item() for el in fn(y_hat, y)]))
-                #if do_tuning:
                     loss_sum += metrics['val_loss'][-1]/len(eval_dataloader)
             if do_tuning:
                 # log loss for pruning
@@ -286,8 +239,6 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
                                          sum(i for _, i, _ in metrics['val_acc'])/len(metrics['val_acc']),
                                          sum(i for _, _, i in metrics['val_acc'])/len(metrics['val_acc']))
                           }
-        #for k, v in history[epoch].items():
-        #  writer.add_scalar(k, v, epoch)
         print(' '.join(['\t- '+str(k)+' = '+str(v)+'\n ' for (k, v) in history[epoch].items()]))
 
     print('Finished Training')
@@ -303,7 +254,6 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
         ax.set_title("Loss for config file= " + str(configfilename))
         ax.legend()
         # fig.show()
-        # fig.savefig('train_val_graph_inclfc_test.png')
         graphname = "Loss_graph_" + str(configfilename) + "_" + ct + ".png"
         print("Saved loss graph with filename: " + graphname)
         fig.savefig(graphname)
@@ -380,15 +330,11 @@ def train(train_dataloader, eval_dataloader, model, loss_fn, metric_fns, optimiz
             for (x, y) in test_dataloader:
                 test_pred.append(model(x))  # forward pass
                 test_truth.append(y)
-        # save predictions TODO file name
+        # save predictions
         filename = str(configfilename) + "_" + ct
         pred_file = open("predictions_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
-        #truth_file = open("groundtruth_" + filename + ".pkl", "wb")  # create new file if this doesn't exist yet
         pkl.dump(test_pred, pred_file)
-        #pkl.dump(test_truth, truth_file)
         pred_file.close()
-        #truth_file.close()
-
     return lowest_val_loss
 
 def accuracy_fn(y_hat, y):
@@ -402,13 +348,11 @@ def accuracy_fn(y_hat, y):
     else:
         return (torch.argmax(y_hat, dim=1) == torch.argmax(y, dim=1)).float().mean()
 
-# more data augmentation options at https://pytorch.org/vision/stable/transforms.html
 def data_augmentation(image, prob):
   translayers = transforms.RandomApply(
       torch.nn.Sequential(
         torchvision.transforms.RandomHorizontalFlip(0.5),
         torchvision.transforms.ColorJitter(0.2, 0.15, 0.15, 0.05),
-        #torchvision.transforms.RandomRotation(8),
         transforms.RandomAffine(6, translate=(0.1,0.1), shear=5),
         transforms.RandomApply(
             torch.nn.Sequential(
@@ -478,12 +422,6 @@ def bce_loss(yhat, y):
     if(type(yhat) is tuple):
         race_label,gender_label=y[0],y[1]
         race_label_hat,gender_label_hat=yhat[0],yhat[1]
-        #print(race_label)
-        #print(race_label_hat)
-        #print(gender_label)
-        #print(gender_label_hat)
-        #print("size")
-        #print(y[0].size(0))
         batch_weights=np.ones(shape=y[0].size(0))
         for i in range(y[0].size(0)):
             batch_weights[i]=loss_penalty_weights[2*np.argmax(race_label[i].cpu())+np.argmax(gender_label[i].cpu())]
@@ -523,8 +461,6 @@ def regularized_BCE(yhat, y):
     l = (l1 + l2) / 2
 
     return l + lmbd*var
-
-
 
  # Define a set of hyperparameter values, build the model, train the model, and evaluate the accuracy
 def objective(trial):
