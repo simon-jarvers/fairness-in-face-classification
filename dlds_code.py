@@ -521,6 +521,7 @@ def regularized_BCE(yhat, y):
     l1 = torch.mean(l1)
     l2 = torch.mean(l2)
     l = (l1 + l2) / 2
+
     return l + lmbd*var
 
 
