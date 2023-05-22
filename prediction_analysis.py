@@ -61,7 +61,10 @@ class PredictionVisualization:
             class_names = [f'{r_n} {g_n}' for g_n in self.gender_names for r_n in self.race_names]
         return class_names
 
-    def plot_histogram(self, fn:str = None):
+    def plot_histogram(self, fn:str = None, override=False):
+        if os.path.isfile(f'figs/histo_1d_{fn}.png') and os.path.isfile(f'figs/histo_2d_{fn}.png') and not override:
+            return
+
         labels_pred, labels_true, classnames = self.pred['class_labels'], self.true['class_labels'], self.class_names
         K = len(classnames)
 
@@ -109,7 +112,10 @@ class PredictionVisualization:
             plt.savefig(plot_name)
         plt.close(fig)
 
-    def plot_gender_acc(self, normalize: bool = False, fn:str = None):
+    def plot_gender_acc(self, normalize: bool = False, fn:str = None, override=False):
+        if os.path.isfile(f'figs/plot_normalize_{normalize}_{fn}.png') and not override:
+            return
+
         gender_and_race_correct = self.get_gender_and_race_values(gender=True, race=True)
         gender_correct = self.get_gender_and_race_values(gender=True, race=False)
         race_correct = self.get_gender_and_race_values(gender=False, race=True)

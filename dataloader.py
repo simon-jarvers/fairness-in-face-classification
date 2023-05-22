@@ -3,10 +3,8 @@ import pandas as pd
 from torchvision.io import read_image
 import torch
 from torch.utils.data import Dataset
-from torch.utils.data import DataLoader
-from torchvision import datasets
-from torchvision.transforms import ToTensor
 import matplotlib.pyplot as plt
+import json
 
 
 class FaceDataset(Dataset):
@@ -60,6 +58,16 @@ def split_based_on_service_test(face_dataset: FaceDataset, service_test = True, 
         group.to_csv(f'./{fn}_{service_test_bool}.csv', index=False)
 
 
+def create_unbalanced_dataset(face_dataset: FaceDataset, service_test: bool, race: str, fn: str):
+    df: pd.DataFrame = face_dataset.img_labels
+
+    df_true = df[df['service_test'] == service_test]
+    df_race = df[df['race'] == race]
+    df_true_and_one_race = pd.concat([df_true, df_race]).drop_duplicates(keep=False)
+
+    df_true_and_one_race.to_csv(f'./{fn}_{service_test}_{race}.csv', index=False)
+
+
 def dataset_balance(face_dataset: FaceDataset):
     df: pd.DataFrame = face_dataset.img_labels
 
@@ -93,12 +101,36 @@ def plot_gender_race(df: pd.DataFrame, title: str):
     plt.show()
 
 
+def save_images_number(face_dataset: FaceDataset):
+    df: pd.DataFrame = face_dataset.img_labels
+
+    df_grouped = df.groupby(['gender', 'race'])
+
+    n_images = {}
+    for name, group in df_grouped:
+        n_images[f'{name[1]} {name[0]}'] = group.shape[0]
+
+    with open(f"n_images_per_class.json", "w") as f:
+        json.dump(n_images, f)
+
+
 if __name__ == '__main__':
     # training_data = FaceDataset('./fairface_label_train.csv', '.')
     #
     # split_dataset(training_data, 0.875)
 
+    # train_True_White = FaceDataset('./train_True_White.csv', '.')
+    # val_True_White = FaceDataset('./val_True_White.csv', '.')
+    # test_True_White = FaceDataset('./test_True_White.csv', '.')
+    # plot_gender_race(train_True_White.img_labels, f'Training data for unbalanced dataset\n'
+    #                                               f'Size of dataset: {train_True_White.img_labels.shape[0]}')
+    # plot_gender_race(val_True_White.img_labels, f'Validation data for unbalanced dataset\n'
+    #                                               f'Size of dataset: {val_True_White.img_labels.shape[0]}')
+    # plot_gender_race(test_True_White.img_labels, f'Test data for unbalanced dataset\n'
+    #                                               f'Size of dataset: {test_True_White.img_labels.shape[0]}')
+
     training_data = FaceDataset('./train.csv', '.')
+    save_images_number(training_data)
     dataset_balance(training_data)
 
     val_data = FaceDataset('./val.csv', '.')
@@ -107,6 +139,9 @@ if __name__ == '__main__':
     test_data = FaceDataset('./fairface_label_val.csv', '.')
     dataset_balance(test_data)
 
+    # create_unbalanced_dataset(training_data, service_test=True, race='White', fn='train')
+    # create_unbalanced_dataset(val_data, service_test=True, race='White', fn='val')
+    # create_unbalanced_dataset(test_data, service_test=True, race='White', fn='test')
     # split_based_on_service_test(val_data, fn='val')
 
     # train_dataloader = DataLoader(training_data, batch_size=64, shuffle=False)
