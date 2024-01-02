@@ -1,6 +1,7 @@
 # Exploring Fairness in the Classification of Faces
 Deep Learning for Data Science (DD2424) KTH spring 2023
 Project: Exploring Fairness in the Classification of Faces
+
 Contributors: Annika Oehri, Frawa Vetterli, Simon Jarvers
 
 Code remarks: dlds_code.py contains our main training code. To do the fairness analysis and plots, refer to prediction_analysis.py
@@ -62,8 +63,8 @@ Used ML techniques: Transfer Learning, Multi-Task Learning (for Race and Gender)
 
 ## Fairness Evaluation and Improvement
 
-1. Although unbalanced datasets often yield biased networks the inversion of the argument cannot be assumed. A balanced dataset is not a suffcient criterion for a unbiased model.
-2. We used different approaches to improve fairness btween classes (e. g. minimizing the standard deviation of per class accuracies). The most promising method was an attention based technique rating underperforming classes higher and overperforming classes lower.
+1. Although unbalanced datasets often yield biased networks the inversion of the argument cannot be assumed. A balanced dataset is not a suffcient criterion for an unbiased model.
+2. We used different approaches to improve fairness between classes (e. g. minimizing the standard deviation of per class accuracies). The most promising method was an attention based technique rating underperforming classes higher and overperforming classes lower.
 
 ### Calssification performance without attention scores
 <figure>
