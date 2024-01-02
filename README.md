@@ -1,5 +1,7 @@
 # Exploring Fairness in the Classification of Faces
+
 Deep Learning for Data Science (DD2424) KTH spring 2023
+
 Project: Exploring Fairness in the Classification of Faces
 
 Contributors: Annika Oehri, Frawa Vetterli, Simon Jarvers
